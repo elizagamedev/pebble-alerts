@@ -1,0 +1,4 @@
+/.pebble-data/
+/.zig-cache/
+/zig-out/
+/zig-pkg/
