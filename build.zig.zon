@@ -1,10 +1,10 @@
 .{
-    .name = .calendar_notifications,
+    .name = .calnotify,
     .version = "0.1.0",
     .dependencies = .{
         .pebble_sdk = .{
-            .url = "git+https://github.com/vsergeev/zig-pebble-sdk?ref=master#b8abddfa723db2f04c16437f71aaef21b661ad47",
-            .hash = "pebble_sdk-1.4.0-rN96oHauAAB-NwY71rFkqTjlfOXv0bFiM79gMNauqSYI",
+            .url = "git+https://github.com/elizagamedev/zig-pebble-sdk.git#4b22cae14a8030d4f674f3deec50554a09406943",
+            .hash = "pebble_sdk-1.4.0-rN96oH2wAACNVPF6REuVGw4jrdfGHWFpnA-wTe79GgCS",
         },
     },
     .minimum_zig_version = "0.16.0",
@@ -13,5 +13,5 @@
         "build.zig.zon",
         "src",
     },
-    .fingerprint = 0x5f54c86aac470557,
+    .fingerprint = 0x43096310fecd6034,
 }
