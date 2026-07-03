@@ -43,6 +43,7 @@
             android-studio
             androidComposition.androidsdk
             kotlin-language-server
+            ktlint
             zls
           ];
 
