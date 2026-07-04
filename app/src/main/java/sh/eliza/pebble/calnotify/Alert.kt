@@ -2,7 +2,6 @@ package sh.eliza.pebble.calnotify
 
 import android.content.ContentUris
 import android.content.Context
-import android.graphics.Color
 import android.provider.CalendarContract.Calendars
 import android.provider.CalendarContract.Instances
 import android.provider.CalendarContract.Reminders
@@ -14,14 +13,10 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.MonthDay
 import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
 import java.time.format.DateTimeParseException
 import java.time.temporal.ChronoUnit
-
-data class ContactAlertConfig(
-    val timeOnDay: LocalTime?,
-    val timeDayBefore: LocalTime?,
-    val color: UByte,
-)
 
 data class Alert(
     val id: UInt,
@@ -35,282 +30,492 @@ data class Alert(
     val color: UByte,
 ) {
     companion object {
-        val PEBBLE_COLORS =
-            listOf(
-                0b11110000u.toUByte(), // Red
-                0b11001100u.toUByte(), // Green
-                0b11000011u.toUByte(), // Blue
-                0b11110011u.toUByte(), // Magenta
-                0b11001111u.toUByte(), // Cyan
-                0b11111100u.toUByte(), // Yellow
-                0b11111000u.toUByte(), // Orange
-                0b11111111u.toUByte(), // White
-            )
-
-        const val MAX_ALERTS = 8
+        fun getUpcomingAlerts(
+            context: Context,
+            appSettings: AppSettings,
+        ): Sequence<Alert> =
+            (
+                getUpcomingCalendarAlerts(context, appSettings.calendarConfigs) +
+                    getUpcomingContactAlerts(context, appSettings.contactConfigs)
+            ).sortedWith(compareBy({ it.alertTime }, { it.id }))
 
         fun getUpcomingCalendarAlerts(
             context: Context,
-            defaultAlertOffsetMinutes: Int? = null,
-        ): List<Alert> {
-            val alerts = mutableListOf<Alert>()
-            val now = Instant.now()
-            val end = now.plus(7, ChronoUnit.DAYS)
-
-            val builder = Instances.CONTENT_URI.buildUpon()
-            ContentUris.appendId(builder, now.toEpochMilli())
-            ContentUris.appendId(builder, end.toEpochMilli())
-
-            val projection =
-                arrayOf(
-                    Instances.EVENT_ID,
-                    Instances.TITLE,
-                    Instances.DESCRIPTION,
-                    Instances.EVENT_LOCATION,
-                    Instances.BEGIN,
-                    Instances.END,
-                    Instances.DISPLAY_COLOR,
-                    Calendars.CALENDAR_DISPLAY_NAME,
-                )
-
-            context.contentResolver
-                .query(
-                    builder.build(),
-                    projection,
-                    "${Instances.VISIBLE} = 1",
-                    null,
-                    "${Instances.BEGIN} ASC",
-                )?.use { cursor ->
-                    val eventIdIdx = cursor.getColumnIndexOrThrow(Instances.EVENT_ID)
-                    val titleIdx = cursor.getColumnIndexOrThrow(Instances.TITLE)
-                    val detailsIdx = cursor.getColumnIndexOrThrow(Instances.DESCRIPTION)
-                    val locIdx = cursor.getColumnIndexOrThrow(Instances.EVENT_LOCATION)
-                    val startIdx = cursor.getColumnIndexOrThrow(Instances.BEGIN)
-                    val endIdx = cursor.getColumnIndexOrThrow(Instances.END)
-                    val colorIdx = cursor.getColumnIndexOrThrow(Instances.DISPLAY_COLOR)
-                    val calNameIdx = cursor.getColumnIndexOrThrow(Calendars.CALENDAR_DISPLAY_NAME)
-
-                    while (cursor.moveToNext()) {
-                        val eventId = cursor.getLong(eventIdIdx)
-
-                        val offsets =
-                            context.contentResolver
-                                .query(
-                                    Reminders.CONTENT_URI,
-                                    arrayOf(Reminders.MINUTES),
-                                    "${Reminders.EVENT_ID} = ?",
-                                    arrayOf(eventId.toString()),
-                                    null,
-                                )?.use { reminderCursor ->
-                                    generateSequence {
-                                        if (reminderCursor.moveToNext()) {
-                                            reminderCursor.getInt(0)
-                                        } else {
-                                            null
-                                        }
-                                    }.toList()
-                                }.orEmpty()
-                                .ifEmpty {
-                                    listOfNotNull(defaultAlertOffsetMinutes)
-                                }
-
-                        if (offsets.isNotEmpty()) {
-                            val calendarName = cursor.getString(calNameIdx) ?: ""
-                            val title = cursor.getString(titleIdx) ?: ""
-                            val details = cursor.getString(detailsIdx) ?: ""
-                            val location = cursor.getString(locIdx) ?: ""
-                            val startTime = Instant.ofEpochMilli(cursor.getLong(startIdx))
-                            val endTime = Instant.ofEpochMilli(cursor.getLong(endIdx))
-                            val color = cursor.getInt(colorIdx)
-
-                            for (offset in offsets) {
-                                alerts.add(
-                                    Alert(
-                                        id = eventId.toUInt(),
-                                        calendarName = calendarName,
-                                        title = title,
-                                        details = details,
-                                        location = location,
-                                        startTime = startTime,
-                                        endTime = endTime,
-                                        alertTime =
-                                            startTime.minus(
-                                                offset.toLong(),
-                                                ChronoUnit.MINUTES,
-                                            ),
-                                        color = androidToPebbleColor(color),
-                                    ),
-                                )
-                            }
-                        }
-                    }
-                }
-
-            // Re-sort the final payload by alert time instead of event start time
-            alerts.sortBy { it.alertTime }
-            return alerts
-        }
+            configs: Map<Long, CalendarAlertConfig>,
+        ): Sequence<Alert> = getUpcomingCalendarAlertsInternal(context, configs)
 
         fun getUpcomingContactAlerts(
             context: Context,
-            birthdayConfig: ContactAlertConfig,
-            anniversaryConfig: ContactAlertConfig,
-        ): List<Alert> {
-            if (birthdayConfig.timeOnDay == null && birthdayConfig.timeDayBefore == null &&
-                anniversaryConfig.timeOnDay == null &&
-                anniversaryConfig.timeDayBefore == null
-            ) {
-                return listOf()
-            }
-
-            val alerts = mutableListOf<Alert>()
-
-            val uri = ContactsContract.Data.CONTENT_URI
-            val projection =
-                arrayOf(
-                    ContactsContract.Data.CONTACT_ID,
-                    ContactsContract.Contacts.DISPLAY_NAME,
-                    ContactsContract.CommonDataKinds.Event.START_DATE,
-                    ContactsContract.CommonDataKinds.Event.TYPE,
-                )
-            val selection =
-                "${ContactsContract.Data.MIMETYPE} = ? " +
-                    "AND ${ContactsContract.CommonDataKinds.Event.TYPE} IN (?, ?)"
-            val selectionArgs =
-                arrayOf(
-                    ContactsContract.CommonDataKinds.Event.CONTENT_ITEM_TYPE,
-                    TYPE_BIRTHDAY.toString(),
-                    TYPE_ANNIVERSARY.toString(),
-                )
-
-            context.contentResolver
-                .query(
-                    uri,
-                    projection,
-                    selection,
-                    selectionArgs,
-                    null,
-                )?.use { cursor ->
-                    val idIdx = cursor.getColumnIndexOrThrow(ContactsContract.Data.CONTACT_ID)
-                    val nameIdx =
-                        cursor.getColumnIndexOrThrow(
-                            ContactsContract.Contacts.DISPLAY_NAME,
-                        )
-                    val dateIdx =
-                        cursor.getColumnIndexOrThrow(
-                            ContactsContract.CommonDataKinds.Event.START_DATE,
-                        )
-                    val typeIdx =
-                        cursor.getColumnIndexOrThrow(
-                            ContactsContract.CommonDataKinds.Event.TYPE,
-                        )
-
-                    val today = LocalDate.now()
-                    val zone = ZoneId.systemDefault()
-
-                    while (cursor.moveToNext()) {
-                        val contactId = cursor.getLong(idIdx)
-                        val name = cursor.getString(nameIdx) ?: continue
-                        val dateStr = cursor.getString(dateIdx) ?: continue
-                        val type = cursor.getInt(typeIdx)
-
-                        val config =
-                            if (type == TYPE_BIRTHDAY) {
-                                birthdayConfig
-                            } else {
-                                anniversaryConfig
-                            }
-                        if (config.timeOnDay == null && config.timeDayBefore == null) {
-                            continue
-                        }
-
-                        val parsedMonthDay =
-                            try {
-                                if (dateStr.startsWith("--")) {
-                                    MonthDay.parse(dateStr)
-                                } else {
-                                    val ld = LocalDate.parse(dateStr)
-                                    MonthDay.of(ld.month, ld.dayOfMonth)
-                                }
-                            } catch (e: DateTimeParseException) {
-                                continue
-                            }
-
-                        var nextOccurrence = parsedMonthDay.atYear(today.year)
-                        if (nextOccurrence.isBefore(today)) {
-                            // If their birthday already passed this year, it's next year
-                            // Java Time gracefully handles Leap Year fallback for
-                            // MonthDay.atYear
-                            nextOccurrence = parsedMonthDay.atYear(today.year + 1)
-                        }
-
-                        val title =
-                            if (type == TYPE_BIRTHDAY) {
-                                "$name's Birthday"
-                            } else {
-                                "$name's Anniversary"
-                            }
-
-                        val calName =
-                            if (type == TYPE_BIRTHDAY) {
-                                "Birthdays"
-                            } else {
-                                "Anniversaries"
-                            }
-
-                        val commonStartTime = nextOccurrence.atStartOfDay(zone).toInstant()
-                        val commonEndTime =
-                            nextOccurrence
-                                .plusDays(
-                                    1,
-                                ).atStartOfDay(zone)
-                                .toInstant()
-
-                        fun addAlertIfValid(
-                            time: LocalTime?,
-                            isDayBefore: Boolean,
-                        ) {
-                            if (time == null) return
-                            val alertTime =
-                                if (isDayBefore) {
-                                    nextOccurrence
-                                        .minusDays(
-                                            1,
-                                        ).atTime(time)
-                                        .atZone(zone)
-                                        .toInstant()
-                                } else {
-                                    nextOccurrence.atTime(time).atZone(zone).toInstant()
-                                }
-
-                            if (alertTime.isAfter(Instant.now())) {
-                                alerts.add(
-                                    Alert(
-                                        id =
-                                            (1u shl 31) or
-                                                ((if (isDayBefore) 1u else 0u) shl 30) or
-                                                ((if (type == TYPE_BIRTHDAY) 1u else 0u) shl 29) or
-                                                (contactId.toUInt() and 0x1FFFFFFFu),
-                                        calendarName = calName,
-                                        title = title,
-                                        details = if (isDayBefore) "Tomorrow" else "Today",
-                                        location = "",
-                                        startTime = commonStartTime,
-                                        endTime = commonEndTime,
-                                        alertTime = alertTime,
-                                        color = config.color,
-                                    ),
-                                )
-                            }
-                        }
-
-                        addAlertIfValid(config.timeDayBefore, true)
-                        addAlertIfValid(config.timeOnDay, false)
-                    }
-                }
-
-            alerts.sortBy { it.alertTime }
-            return alerts
-        }
+            contactConfigs: Map<ContactEventType, ContactAlertConfig>,
+        ): Sequence<Alert> = getUpcomingContactAlertsInternal(context, contactConfigs)
     }
 }
+
+// --- ID Generation ---
+private const val ID_DOMAIN_CONTACT = 0x80000000u
+private const val ID_CONTACT_BIRTHDAY = 0x40000000u
+
+private const val ID_MASK = 0x7FFFFFFFu
+private const val ID_CONTACT_MASK = 0x3FFFFFFFu
+
+private fun makeCalendarId(eventId: Long): UInt = eventId.toUInt() and ID_MASK
+
+private fun makeContactId(
+    contactId: Long,
+    type: ContactEventType,
+): UInt {
+    var id = ID_DOMAIN_CONTACT
+    if (type == ContactEventType.BIRTHDAY) id = id or ID_CONTACT_BIRTHDAY
+    return id or (contactId.toUInt() and ID_CONTACT_MASK)
+}
+
+private fun getUpcomingCalendarAlertsInternal(
+    context: Context,
+    configs: Map<Long, CalendarAlertConfig>,
+): Sequence<Alert> =
+    sequence {
+        if (configs.isEmpty()) return@sequence
+        val now = Instant.now()
+        val searchStart = now.minus(1, ChronoUnit.DAYS)
+        val end = now.plus(7, ChronoUnit.DAYS)
+
+        val builder = Instances.CONTENT_URI.buildUpon()
+        ContentUris.appendId(builder, searchStart.toEpochMilli())
+        ContentUris.appendId(builder, end.toEpochMilli())
+
+        val projection =
+            arrayOf(
+                Instances.EVENT_ID,
+                Instances.TITLE,
+                Instances.DESCRIPTION,
+                Instances.EVENT_LOCATION,
+                Instances.BEGIN,
+                Instances.END,
+                Instances.DISPLAY_COLOR,
+                Calendars.CALENDAR_DISPLAY_NAME,
+                Instances.ALL_DAY,
+                Instances.CALENDAR_ID,
+            )
+
+        val calIds = configs.keys.joinToString(",")
+
+        context.contentResolver
+            .query(
+                builder.build(),
+                projection,
+                "${Instances.CALENDAR_ID} IN ($calIds)",
+                null,
+                "${Instances.BEGIN} ASC",
+            )?.use { cursor ->
+                val eventIdIdx = cursor.getColumnIndexOrThrow(Instances.EVENT_ID)
+                val titleIdx = cursor.getColumnIndexOrThrow(Instances.TITLE)
+                val detailsIdx = cursor.getColumnIndexOrThrow(Instances.DESCRIPTION)
+                val locIdx = cursor.getColumnIndexOrThrow(Instances.EVENT_LOCATION)
+                val startIdx = cursor.getColumnIndexOrThrow(Instances.BEGIN)
+                val endIdx = cursor.getColumnIndexOrThrow(Instances.END)
+                val colorIdx = cursor.getColumnIndexOrThrow(Instances.DISPLAY_COLOR)
+                val calNameIdx = cursor.getColumnIndexOrThrow(Calendars.CALENDAR_DISPLAY_NAME)
+                val allDayIdx = cursor.getColumnIndexOrThrow(Instances.ALL_DAY)
+                val calIdIdx = cursor.getColumnIndexOrThrow(Instances.CALENDAR_ID)
+
+                while (cursor.moveToNext()) {
+                    val calId = cursor.getLong(calIdIdx)
+                    val config = configs[calId] ?: continue
+
+                    val isAllDay = cursor.getInt(allDayIdx) != 0
+
+                    val startInstant = Instant.ofEpochMilli(cursor.getLong(startIdx))
+                    val endInstant = Instant.ofEpochMilli(cursor.getLong(endIdx))
+                    val eventId = cursor.getLong(eventIdIdx)
+                    val calendarName = cursor.getString(calNameIdx) ?: ""
+                    val title =
+                        cursor.getString(titleIdx)?.takeUnless { it.isBlank() } ?: "Untitled"
+                    val details = cursor.getString(detailsIdx) ?: ""
+                    val location = cursor.getString(locIdx) ?: ""
+                    val color = cursor.getInt(colorIdx)
+
+                    val offsets =
+                        context.contentResolver
+                            .query(
+                                Reminders.CONTENT_URI,
+                                arrayOf(Reminders.MINUTES),
+                                "${Reminders.EVENT_ID} = ?",
+                                arrayOf(eventId.toString()),
+                                null,
+                            )?.use { reminderCursor ->
+                                generateSequence {
+                                    if (reminderCursor.moveToNext()) {
+                                        reminderCursor.getInt(0)
+                                    } else {
+                                        null
+                                    }
+                                }.toList()
+                            }.orEmpty()
+
+                    yieldAll(
+                        if (isAllDay) {
+                            createAllDayCalendarAlerts(
+                                config,
+                                eventId = eventId,
+                                calendarName = calendarName,
+                                title = title,
+                                details = details,
+                                location = location,
+                                startDate = startInstant.atZone(ZoneOffset.UTC).toLocalDate(),
+                                endDate = endInstant.atZone(ZoneOffset.UTC).toLocalDate(),
+                                color = color,
+                                offsets = offsets,
+                            )
+                        } else {
+                            createTimedCalendarAlerts(
+                                config,
+                                eventId = eventId,
+                                calendarName = calendarName,
+                                title = title,
+                                details = details,
+                                location = location,
+                                startTime = startInstant,
+                                endTime = endInstant,
+                                color = color,
+                                offsets = offsets,
+                            )
+                        },
+                    )
+                }
+            }
+    }
+
+private fun createAllDayCalendarAlerts(
+    config: CalendarAlertConfig,
+    eventId: Long,
+    calendarName: String,
+    title: String,
+    details: String,
+    location: String,
+    startDate: LocalDate,
+    endDate: LocalDate,
+    color: Int,
+    offsets: List<Int>,
+): Sequence<Alert> =
+    sequence {
+        val startTime = startDate.atStartOfDay(ZoneId.systemDefault()).toInstant()
+        val endTime = endDate.atStartOfDay(ZoneId.systemDefault()).toInstant()
+
+        if (offsets.isNotEmpty()) {
+            for (offset in offsets) {
+                yield(
+                    Alert(
+                        id = makeCalendarId(eventId),
+                        calendarName = calendarName,
+                        title = title,
+                        details = details,
+                        location = location,
+                        startTime = startTime,
+                        endTime = endTime,
+                        alertTime = startTime.minus(offset.toLong(), ChronoUnit.MINUTES),
+                        color = androidToPebbleColor(color),
+                    ),
+                )
+            }
+        }
+
+        val days =
+            if (ChronoUnit.DAYS.between(startDate, endDate) <= 1) {
+                listOf(startDate)
+            } else {
+                when (config.multiDayMode) {
+                    MultiDayAlertMode.OFF -> {
+                        emptyList()
+                    }
+
+                    MultiDayAlertMode.FIRST_DAY -> {
+                        listOf(startDate)
+                    }
+
+                    MultiDayAlertMode.EVERY_DAY -> {
+                        generateSequence(startDate) { it.plusDays(1) }
+                            .takeWhile { it.isBefore(endDate) }
+                            .toList()
+                    }
+                }
+            }
+
+        if (offsets.isEmpty() && config.timeDayBefore != null) {
+            days.firstOrNull()?.let { firstDay ->
+                val alertTime =
+                    firstDay
+                        .minusDays(1)
+                        .atTime(config.timeDayBefore)
+                        .atZone(ZoneId.systemDefault())
+                        .toInstant()
+
+                yield(
+                    Alert(
+                        id = makeCalendarId(eventId),
+                        calendarName = calendarName,
+                        title = "Tomorrow: $title",
+                        details = details,
+                        location = location,
+                        startTime = startTime,
+                        endTime = endTime,
+                        alertTime = alertTime,
+                        color = androidToPebbleColor(color),
+                    ),
+                )
+            }
+        }
+
+        if (config.timeOnDay != null) {
+            for (day in days) {
+                val alertTime =
+                    day
+                        .atTime(
+                            config.timeOnDay,
+                        ).atZone(ZoneId.systemDefault())
+                        .toInstant()
+                yield(
+                    Alert(
+                        id = makeCalendarId(eventId),
+                        calendarName = calendarName,
+                        title = "Today: $title",
+                        details = details,
+                        location = location,
+                        startTime = startTime,
+                        endTime = endTime,
+                        alertTime = alertTime,
+                        color = androidToPebbleColor(color),
+                    ),
+                )
+            }
+        }
+    }
+
+private fun createTimedCalendarAlerts(
+    config: CalendarAlertConfig,
+    eventId: Long,
+    calendarName: String,
+    title: String,
+    details: String,
+    location: String,
+    startTime: Instant,
+    endTime: Instant,
+    color: Int,
+    offsets: List<Int>,
+): Sequence<Alert> =
+    sequence {
+        val finalOffsets = offsets.ifEmpty { listOfNotNull(config.defaultAlertOffsetMinutes) }
+
+        for (offset in finalOffsets) {
+            yield(
+                Alert(
+                    id = makeCalendarId(eventId),
+                    calendarName = calendarName,
+                    title = title,
+                    details = details,
+                    location = location,
+                    startTime = startTime,
+                    endTime = endTime,
+                    alertTime = startTime.minus(offset.toLong(), ChronoUnit.MINUTES),
+                    color = androidToPebbleColor(color),
+                ),
+            )
+        }
+    }
+
+private fun getUpcomingContactAlertsInternal(
+    context: Context,
+    contactConfigs: Map<ContactEventType, ContactAlertConfig>,
+): Sequence<Alert> =
+    sequence {
+        val hasAnyConfig =
+            contactConfigs.values.any { it.timeOnDay != null || it.timeDayBefore != null }
+        if (!hasAnyConfig) {
+            return@sequence
+        }
+
+        val uri = ContactsContract.Data.CONTENT_URI
+        val projection =
+            arrayOf(
+                ContactsContract.Data.CONTACT_ID,
+                ContactsContract.Contacts.DISPLAY_NAME,
+                ContactsContract.CommonDataKinds.Event.START_DATE,
+                ContactsContract.CommonDataKinds.Event.TYPE,
+            )
+        val selection =
+            "${ContactsContract.Data.MIMETYPE} = ? " +
+                "AND ${ContactsContract.CommonDataKinds.Event.TYPE} IN (?, ?)"
+        val selectionArgs =
+            arrayOf(
+                ContactsContract.CommonDataKinds.Event.CONTENT_ITEM_TYPE,
+                TYPE_BIRTHDAY.toString(),
+                TYPE_ANNIVERSARY.toString(),
+            )
+
+        context.contentResolver
+            .query(
+                uri,
+                projection,
+                selection,
+                selectionArgs,
+                null,
+            )?.use { cursor ->
+                val idIdx = cursor.getColumnIndexOrThrow(ContactsContract.Data.CONTACT_ID)
+                val nameIdx =
+                    cursor.getColumnIndexOrThrow(
+                        ContactsContract.Contacts.DISPLAY_NAME,
+                    )
+                val dateIdx =
+                    cursor.getColumnIndexOrThrow(
+                        ContactsContract.CommonDataKinds.Event.START_DATE,
+                    )
+                val typeIdx =
+                    cursor.getColumnIndexOrThrow(
+                        ContactsContract.CommonDataKinds.Event.TYPE,
+                    )
+
+                val today = LocalDate.now()
+                val zone = ZoneId.systemDefault()
+
+                while (cursor.moveToNext()) {
+                    val name = cursor.getString(nameIdx) ?: continue
+                    val dateStr = cursor.getString(dateIdx) ?: continue
+                    val type =
+                        when (cursor.getInt(typeIdx)) {
+                            TYPE_BIRTHDAY -> ContactEventType.BIRTHDAY
+                            TYPE_ANNIVERSARY -> ContactEventType.ANNIVERSARY
+                            else -> null
+                        } ?: continue
+
+                    val config = contactConfigs[type]
+                    if (config == null ||
+                        (config.timeOnDay == null && config.timeDayBefore == null)
+                    ) {
+                        continue
+                    }
+
+                    yieldAll(
+                        createFromContactInstance(
+                            config,
+                            today,
+                            zone,
+                            contactId = cursor.getLong(idIdx),
+                            name = name,
+                            dateStr = dateStr,
+                            type = type,
+                        ),
+                    )
+                }
+            }
+    }
+
+private fun createFromContactInstance(
+    config: ContactAlertConfig,
+    today: LocalDate,
+    zone: ZoneId,
+    contactId: Long,
+    name: String,
+    dateStr: String,
+    type: ContactEventType,
+): Sequence<Alert> =
+    sequence {
+        var originalYear: Int? = null
+        val parsedMonthDay =
+            try {
+                if (dateStr.startsWith("--")) {
+                    MonthDay.parse(dateStr)
+                } else {
+                    val ld = LocalDate.parse(dateStr)
+                    originalYear = ld.year
+                    MonthDay.of(ld.month, ld.dayOfMonth)
+                }
+            } catch (e: DateTimeParseException) {
+                return@sequence
+            }
+
+        var nextOccurrence = parsedMonthDay.atYear(today.year)
+        if (nextOccurrence.isBefore(today)) {
+            // If their birthday already passed this year, it's next year
+            // Java Time gracefully handles Leap Year fallback for
+            // MonthDay.atYear
+            nextOccurrence = parsedMonthDay.atYear(today.year + 1)
+        }
+
+        val years = originalYear?.let { nextOccurrence.year - it }
+
+        val title =
+            when (type) {
+                ContactEventType.BIRTHDAY -> "$name's Birthday"
+                ContactEventType.ANNIVERSARY -> "$name's Anniversary"
+            }
+
+        val calName =
+            when (type) {
+                ContactEventType.BIRTHDAY -> "Birthdays"
+                ContactEventType.ANNIVERSARY -> "Anniversaries"
+            }
+
+        val commonStartTime = nextOccurrence.atStartOfDay(zone).toInstant()
+        val commonEndTime =
+            nextOccurrence
+                .plusDays(
+                    1,
+                ).atStartOfDay(zone)
+                .toInstant()
+
+        suspend fun SequenceScope<Alert>.addAlertIfValid(
+            time: LocalTime?,
+            isDayBefore: Boolean,
+        ) {
+            if (time == null) return
+            val alertTime =
+                if (isDayBefore) {
+                    nextOccurrence
+                        .minusDays(
+                            1,
+                        ).atTime(time)
+                        .atZone(zone)
+                        .toInstant()
+                } else {
+                    nextOccurrence.atTime(time).atZone(zone).toInstant()
+                }
+
+            val finalTitle = if (isDayBefore) "Tomorrow: $title" else "Today: $title"
+
+            val detailsText =
+                if (years != null) {
+                    val yearsStr = "$years year${if (years == 1) "" else "s"}"
+                    if (type == ContactEventType.BIRTHDAY) {
+                        if (isDayBefore) {
+                            "$name will be $yearsStr old tomorrow!"
+                        } else {
+                            "$name is $yearsStr old today!"
+                        }
+                    } else {
+                        if (isDayBefore) {
+                            "It will be $yearsStr tomorrow!"
+                        } else {
+                            "It's been $yearsStr!"
+                        }
+                    }
+                } else {
+                    ""
+                }
+
+            yield(
+                Alert(
+                    id = makeContactId(contactId, type),
+                    calendarName = calName,
+                    title = finalTitle,
+                    details = detailsText,
+                    location = "",
+                    startTime = commonStartTime,
+                    endTime = commonEndTime,
+                    alertTime = alertTime,
+                    color = config.color,
+                ),
+            )
+        }
+
+        addAlertIfValid(config.timeDayBefore, true)
+        addAlertIfValid(config.timeOnDay, false)
+    }

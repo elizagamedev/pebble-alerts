@@ -102,9 +102,13 @@ class PebbleManager(
         return result?.values?.any { it == TransmissionResult.Success } == true
     }
 
+    companion object {
+        const val MAX_ALERTS = 8
+    }
+
     suspend fun postAlerts(alerts: List<Alert>) {
-        require(alerts.size <= Alert.MAX_ALERTS) {
-            "Cannot send more than ${Alert.MAX_ALERTS} alerts at once (attempted to send ${alerts.size})"
+        require(alerts.size <= MAX_ALERTS) {
+            "Cannot send more than $MAX_ALERTS alerts at once (attempted to send ${alerts.size})"
         }
         val dict =
             mutableMapOf<UInt, PebbleDictionaryItem>(

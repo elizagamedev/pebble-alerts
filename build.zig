@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) !void {
     pebble_sdk.addPebbleApplication(b, .{
         .name = "calnotify",
         .pebble = .{
-            .displayName = "Calendar Notifications",
+            .displayName = "Calendar Alerts",
             .author = "Eliza",
             .uuid = "075a861e-c60b-4bb6-b3f2-b592925e86b1",
             .version = .{ .major = 0, .minor = 1 },

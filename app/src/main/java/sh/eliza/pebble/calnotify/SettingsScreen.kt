@@ -37,6 +37,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
@@ -60,20 +61,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.intPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -82,17 +75,12 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
-
-val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
-
-const val DEFAULT_DAY_OF_TIME = 9 * 3600 // 9:00 AM
-const val DEFAULT_DAY_BEFORE_TIME = 18 * 3600 // 6:00 PM
-const val DEFAULT_UNREMINDED_MINUTES = 10
 
 data class CalendarInfo(
     val id: Long,
@@ -101,7 +89,8 @@ data class CalendarInfo(
 )
 
 fun getDeviceCalendars(context: Context): List<CalendarInfo> {
-    if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) !=
+    if (
+        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) !=
         PackageManager.PERMISSION_GRANTED
     ) {
         return emptyList()
@@ -139,7 +128,7 @@ fun getDeviceCalendars(context: Context): List<CalendarInfo> {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(repository: SettingsRepository) {
     val context = LocalContext.current
     val openSettings = {
         val intent =
@@ -167,15 +156,28 @@ fun SettingsScreen() {
             val id = backStackEntry.arguments?.getLong("id") ?: 0L
             val name = backStackEntry.arguments?.getString("name") ?: ""
             val accountName = backStackEntry.arguments?.getString("accountName") ?: ""
-            CalendarDetailScreen(id = id, name = name, accountName = accountName, onNavigateUp = {
-                navController.navigateUp()
-            })
+            CalendarDetailScreen(
+                id = id,
+                name = name,
+                accountName = accountName,
+                repository = repository,
+                onNavigateUp = { navController.navigateUp() },
+            )
         }
-        composable("birthdays") {
-            BirthdaysScreen(onNavigateUp = { navController.navigateUp() })
-        }
-        composable("anniversaries") {
-            AnniversariesScreen(onNavigateUp = { navController.navigateUp() })
+        composable(
+            "contacts/{id}",
+            arguments = listOf(navArgument("id") { type = NavType.StringType }),
+        ) { backStackEntry ->
+            val id = backStackEntry.arguments?.getString("id") ?: ""
+            val eventType =
+                runCatching { ContactEventType.valueOf(id) }.getOrDefault(ContactEventType.BIRTHDAY)
+
+            ContactSettingsScreen(
+                title = eventType.label,
+                eventType = eventType,
+                repository = repository,
+                onNavigateUp = { navController.navigateUp() },
+            )
         }
     }
 }
@@ -205,9 +207,7 @@ fun HomeScreen(
             ) == PackageManager.PERMISSION_GRANTED,
         )
     }
-    var calendars by remember {
-        mutableStateOf(getDeviceCalendars(context))
-    }
+    var calendars by remember { mutableStateOf(getDeviceCalendars(context)) }
 
     DisposableEffect(lifecycleOwner) {
         val observer =
@@ -217,21 +217,17 @@ fun HomeScreen(
                         ContextCompat.checkSelfPermission(
                             context,
                             Manifest.permission.READ_CALENDAR,
-                        ) ==
-                        PackageManager.PERMISSION_GRANTED
+                        ) == PackageManager.PERMISSION_GRANTED
                     hasContactsPermission =
                         ContextCompat.checkSelfPermission(
                             context,
                             Manifest.permission.READ_CONTACTS,
-                        ) ==
-                        PackageManager.PERMISSION_GRANTED
+                        ) == PackageManager.PERMISSION_GRANTED
                     calendars = getDeviceCalendars(context)
                 }
             }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     Scaffold(
@@ -262,7 +258,7 @@ fun HomeScreen(
             PreferenceCategory(title = "Calendars")
             SettingsGroup {
                 if (!hasCalendarPermission) {
-                    androidx.compose.material3.ListItem(
+                    ListItem(
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         headlineContent = {
                             Text(
@@ -272,22 +268,26 @@ fun HomeScreen(
                         },
                     )
                 } else if (calendars.isEmpty()) {
-                    androidx.compose.material3.ListItem(
+                    ListItem(
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         headlineContent = { Text("No calendars found.", color = Color.Gray) },
                     )
                 } else {
                     calendars.forEach { calendar ->
-                        androidx.compose.material3.ListItem(
+                        ListItem(
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                             headlineContent = { Text(calendar.name) },
                             supportingContent = { Text(calendar.accountName) },
                             modifier =
                                 Modifier.clickable {
                                     onNavigate(
-                                        "calendar/${calendar.id}?name=${Uri.encode(
+                                        "calendar/${calendar.id}?name=${URLEncoder.encode(
                                             calendar.name,
-                                        )}&accountName=${Uri.encode(calendar.accountName)}",
+                                            StandardCharsets.UTF_8.name(),
+                                        ).replace("+", "%20")}&accountName=${URLEncoder.encode(
+                                            calendar.accountName,
+                                            StandardCharsets.UTF_8.name(),
+                                        ).replace("+", "%20")}",
                                     )
                                 },
                         )
@@ -298,7 +298,7 @@ fun HomeScreen(
             PreferenceCategory(title = "Events")
             SettingsGroup {
                 if (!hasContactsPermission) {
-                    androidx.compose.material3.ListItem(
+                    ListItem(
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                         headlineContent = {
                             Text(
@@ -308,15 +308,25 @@ fun HomeScreen(
                         },
                     )
                 } else {
-                    androidx.compose.material3.ListItem(
+                    ListItem(
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        headlineContent = { Text("Birthdays") },
-                        modifier = Modifier.clickable { onNavigate("birthdays") },
+                        headlineContent = { Text(ContactEventType.BIRTHDAY.label) },
+                        modifier =
+                            Modifier.clickable {
+                                onNavigate(
+                                    "contacts/${ContactEventType.BIRTHDAY.name}",
+                                )
+                            },
                     )
-                    androidx.compose.material3.ListItem(
+                    ListItem(
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        headlineContent = { Text("Anniversaries") },
-                        modifier = Modifier.clickable { onNavigate("anniversaries") },
+                        headlineContent = { Text(ContactEventType.ANNIVERSARY.label) },
+                        modifier =
+                            Modifier.clickable {
+                                onNavigate(
+                                    "contacts/${ContactEventType.ANNIVERSARY.name}",
+                                )
+                            },
                     )
                 }
             }
@@ -330,6 +340,7 @@ fun CalendarDetailScreen(
     id: Long,
     name: String,
     accountName: String,
+    repository: SettingsRepository,
     onNavigateUp: () -> Unit,
 ) {
     Scaffold(
@@ -355,18 +366,23 @@ fun CalendarDetailScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(bottom = 24.dp),
         ) {
-            CalendarSettingsGroup(id = id, enabled = true)
+            CalendarSettingsGroup(id = id, enabled = true, repository = repository)
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BirthdaysScreen(onNavigateUp: () -> Unit) {
+fun ContactSettingsScreen(
+    title: String,
+    eventType: ContactEventType,
+    repository: SettingsRepository,
+    onNavigateUp: () -> Unit,
+) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Birthdays") },
+                title = { Text(title) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateUp) {
                         Icon(
@@ -386,96 +402,47 @@ fun BirthdaysScreen(onNavigateUp: () -> Unit) {
                     .verticalScroll(rememberScrollState())
                     .padding(bottom = 24.dp),
         ) {
-            BirthdaysAnniversariesSettingsGroup(type = "birthdays")
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun AnniversariesScreen(onNavigateUp: () -> Unit) {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Anniversaries") },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateUp) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                        )
-                    }
-                },
+            ContactsSettingsGroup(
+                repository = repository,
+                eventType = eventType,
             )
-        },
-    ) { innerPadding ->
-        Column(
-            modifier =
-                Modifier
-                    .padding(innerPadding)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(bottom = 24.dp),
-        ) {
-            BirthdaysAnniversariesSettingsGroup(type = "anniversaries")
         }
     }
 }
 
 @Composable
-fun BirthdaysAnniversariesSettingsGroup(type: String) {
-    val context = LocalContext.current
-    val timelinePinsKey = booleanPreferencesKey("${type}_timeline_pins")
-    val dayOfKey = booleanPreferencesKey("${type}_day_of")
-    val dayOfTimeKey = intPreferencesKey("${type}_day_of_time")
-    val dayBeforeKey = booleanPreferencesKey("${type}_day_before")
-    val dayBeforeTimeKey = intPreferencesKey("${type}_day_before_time")
+fun ContactsSettingsGroup(
+    repository: SettingsRepository,
+    eventType: ContactEventType,
+) {
+    val flow = remember(repository, eventType) { repository.getContactSettingsFlow(eventType) }
+    val settings by flow.collectAsState(initial = ContactSettings.DEFAULT)
 
-    val timelinePins by context.dataStore.data
-        .map {
-            it[timelinePinsKey] ?: false
-        }.collectAsState(initial = false)
-
-    val dayOf by context.dataStore.data.map { it[dayOfKey] ?: false }.collectAsState(
-        initial = false,
-    )
-    val dayOfTime by context.dataStore.data
-        .map { LocalTime.ofSecondOfDay((it[dayOfTimeKey] ?: DEFAULT_DAY_OF_TIME).toLong()) }
-        .collectAsState(initial = LocalTime.ofSecondOfDay(DEFAULT_DAY_OF_TIME.toLong()))
-
-    val dayBefore by context.dataStore.data
-        .map {
-            it[dayBeforeKey] ?: false
-        }.collectAsState(initial = false)
-    val dayBeforeTime by context.dataStore.data
-        .map { LocalTime.ofSecondOfDay((it[dayBeforeTimeKey] ?: DEFAULT_DAY_BEFORE_TIME).toLong()) }
-        .collectAsState(initial = LocalTime.ofSecondOfDay(DEFAULT_DAY_BEFORE_TIME.toLong()))
-
-    val colorKey = intPreferencesKey("${type}_color")
-    val defaultColor = Alert.PEBBLE_COLORS[3].toInt() // Magenta
-    val selectedColor by context.dataStore.data
-        .map {
-            it[colorKey] ?: defaultColor
-        }.collectAsState(initial = defaultColor)
+    val timelinePins = settings.timelinePins
+    val dayOf = settings.dayOf
+    val dayOfTime = LocalTime.ofSecondOfDay(settings.dayOfTime.toLong())
+    val dayBefore = settings.dayBefore
+    val dayBeforeTime = LocalTime.ofSecondOfDay(settings.dayBeforeTime.toLong())
+    val selectedColor = settings.color
 
     val scope = rememberCoroutineScope()
+
+    fun updateSettings(transform: (ContactSettings) -> ContactSettings) {
+        scope.launch { repository.updateContactSettings(eventType, transform) }
+    }
 
     PreferenceCategory(title = "General")
     SettingsGroup {
         SwitchPreference(
             title = "Add timeline pins",
             checked = timelinePins,
-            onCheckedChange = { checked ->
-                scope.launch { context.dataStore.edit { it[timelinePinsKey] = checked } }
-            },
+            onCheckedChange = { checked -> updateSettings { it.copy(timelinePins = checked) } },
         )
 
         ColorPreference(
             title = "Color",
             selectedColor = selectedColor,
-            onColorSelected = { colorArgb ->
-                scope.launch { context.dataStore.edit { it[colorKey] = colorArgb } }
-            },
+            onColorSelected = { colorArgb -> updateSettings { it.copy(color = colorArgb) } },
         )
     }
 
@@ -484,9 +451,7 @@ fun BirthdaysAnniversariesSettingsGroup(type: String) {
         SwitchPreference(
             title = "Day-of alerts",
             checked = dayOf,
-            onCheckedChange = { checked ->
-                scope.launch { context.dataStore.edit { it[dayOfKey] = checked } }
-            },
+            onCheckedChange = { checked -> updateSettings { it.copy(dayOf = checked) } },
         )
 
         var showDayOfDialog by remember { mutableStateOf(false) }
@@ -504,11 +469,7 @@ fun BirthdaysAnniversariesSettingsGroup(type: String) {
                 initialTime = dayOfTime,
                 onDismiss = { showDayOfDialog = false },
                 onTimeSelected = { time ->
-                    scope.launch {
-                        context.dataStore.edit { prefs ->
-                            prefs[dayOfTimeKey] = time.toSecondOfDay()
-                        }
-                    }
+                    updateSettings { it.copy(dayOfTime = time.toSecondOfDay()) }
                     showDayOfDialog = false
                 },
             )
@@ -520,9 +481,7 @@ fun BirthdaysAnniversariesSettingsGroup(type: String) {
         SwitchPreference(
             title = "Day-before alerts",
             checked = dayBefore,
-            onCheckedChange = { checked ->
-                scope.launch { context.dataStore.edit { it[dayBeforeKey] = checked } }
-            },
+            onCheckedChange = { checked -> updateSettings { it.copy(dayBefore = checked) } },
         )
 
         var showDayBeforeDialog by remember { mutableStateOf(false) }
@@ -540,11 +499,7 @@ fun BirthdaysAnniversariesSettingsGroup(type: String) {
                 initialTime = dayBeforeTime,
                 onDismiss = { showDayBeforeDialog = false },
                 onTimeSelected = { time ->
-                    scope.launch {
-                        context.dataStore.edit { prefs ->
-                            prefs[dayBeforeTimeKey] = time.toSecondOfDay()
-                        }
-                    }
+                    updateSettings { it.copy(dayBeforeTime = time.toSecondOfDay()) }
                     showDayBeforeDialog = false
                 },
             )
@@ -555,16 +510,11 @@ fun BirthdaysAnniversariesSettingsGroup(type: String) {
 @Composable
 fun SettingsGroup(content: @Composable () -> Unit) {
     Surface(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         shape = RoundedCornerShape(24.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
     ) {
-        Column(modifier = Modifier.padding(vertical = 8.dp)) {
-            content()
-        }
+        Column(modifier = Modifier.padding(vertical = 8.dp)) { content() }
     }
 }
 
@@ -575,10 +525,7 @@ fun PreferenceCategory(title: String) {
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.primary,
         modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 32.dp)
-                .padding(top = 24.dp, bottom = 8.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 32.dp).padding(top = 24.dp, bottom = 8.dp),
     )
 }
 
@@ -590,13 +537,11 @@ fun SwitchPreference(
     enabled: Boolean = true,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    androidx.compose.material3.ListItem(
+    ListItem(
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         headlineContent = { Text(title, color = if (enabled) Color.Unspecified else Color.Gray) },
         supportingContent =
-            subtitle?.let {
-                { Text(it, color = if (enabled) Color.Unspecified else Color.Gray) }
-            },
+            subtitle?.let { { Text(it, color = if (enabled) Color.Unspecified else Color.Gray) } },
         trailingContent = {
             Switch(
                 checked = checked,
@@ -616,7 +561,7 @@ fun DependentValuePreference(
     onClick: () -> Unit,
 ) {
     val alpha = if (enabled) 1f else 0.38f
-    androidx.compose.material3.ListItem(
+    ListItem(
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         headlineContent = {
             Text(
@@ -674,9 +619,7 @@ fun DurationPickerDialog(
                 }
             }
         },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -700,9 +643,7 @@ fun TimePickerDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Select time") },
-        text = {
-            TimePicker(state = timePickerState)
-        },
+        text = { TimePicker(state = timePickerState) },
         confirmButton = {
             TextButton(
                 onClick = {
@@ -712,9 +653,7 @@ fun TimePickerDialog(
                 Text("OK")
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -722,47 +661,25 @@ fun TimePickerDialog(
 fun CalendarSettingsGroup(
     id: Long,
     enabled: Boolean,
+    repository: SettingsRepository,
 ) {
-    val context = LocalContext.current
+    val flow = remember(repository, id) { repository.getCalendarSettingsFlow(id) }
+    val settings by flow.collectAsState(initial = CalendarSettings.DEFAULT)
+
+    val enableNotifications = settings.enabled
+    val notifyUnreminded = settings.notifyUnreminded
+    val unremindedMinutesBefore = settings.unremindedMinutes
+    val dayOfAllDay = settings.dayOf
+    val dayOfTime = LocalTime.ofSecondOfDay(settings.dayOfTime.toLong())
+    val dayBeforeAllDay = settings.dayBefore
+    val dayBeforeTime = LocalTime.ofSecondOfDay(settings.dayBeforeTime.toLong())
+    val multiDayMode = settings.multiDayMode
+
     val scope = rememberCoroutineScope()
 
-    val enableKey = booleanPreferencesKey("calendar_${id}_enable")
-    val notifyUnremindedKey = booleanPreferencesKey("calendar_${id}_notify_unreminded")
-    val unremindedMinutesKey = intPreferencesKey("calendar_${id}_unreminded_minutes")
-    val dayOfKey = booleanPreferencesKey("calendar_${id}_day_of")
-    val dayOfTimeKey = intPreferencesKey("calendar_${id}_day_of_time")
-    val dayBeforeKey = booleanPreferencesKey("calendar_${id}_day_before")
-    val dayBeforeTimeKey = intPreferencesKey("calendar_${id}_day_before_time")
-
-    val enableNotifications by context.dataStore.data
-        .map {
-            it[enableKey] ?: false
-        }.collectAsState(initial = false)
-    val notifyUnreminded by context.dataStore.data
-        .map {
-            it[notifyUnremindedKey] ?: false
-        }.collectAsState(initial = false)
-    val unremindedMinutesBefore by context.dataStore.data
-        .map {
-            it[unremindedMinutesKey]
-                ?: DEFAULT_UNREMINDED_MINUTES
-        }.collectAsState(initial = DEFAULT_UNREMINDED_MINUTES)
-
-    val dayOfAllDay by context.dataStore.data
-        .map {
-            it[dayOfKey] ?: false
-        }.collectAsState(initial = false)
-    val dayOfTime by context.dataStore.data
-        .map { LocalTime.ofSecondOfDay((it[dayOfTimeKey] ?: DEFAULT_DAY_OF_TIME).toLong()) }
-        .collectAsState(initial = LocalTime.ofSecondOfDay(DEFAULT_DAY_OF_TIME.toLong()))
-
-    val dayBeforeAllDay by context.dataStore.data
-        .map {
-            it[dayBeforeKey] ?: false
-        }.collectAsState(initial = false)
-    val dayBeforeTime by context.dataStore.data
-        .map { LocalTime.ofSecondOfDay((it[dayBeforeTimeKey] ?: DEFAULT_DAY_BEFORE_TIME).toLong()) }
-        .collectAsState(initial = LocalTime.ofSecondOfDay(DEFAULT_DAY_BEFORE_TIME.toLong()))
+    fun updateSettings(transform: (CalendarSettings) -> CalendarSettings) {
+        scope.launch { repository.updateCalendarSettings(id, transform) }
+    }
 
     val isGroupEnabled = enabled && enableNotifications
 
@@ -771,14 +688,7 @@ fun CalendarSettingsGroup(
             title = "Enable notifications",
             checked = if (enabled) enableNotifications else false,
             enabled = enabled,
-            onCheckedChange = { checked ->
-                scope.launch {
-                    context.dataStore.edit {
-                        it[enableKey] =
-                            checked
-                    }
-                }
-            },
+            onCheckedChange = { checked -> updateSettings { it.copy(enabled = checked) } },
         )
     }
 
@@ -788,14 +698,7 @@ fun CalendarSettingsGroup(
             title = "Notify for un-reminded events",
             checked = notifyUnreminded,
             enabled = isGroupEnabled,
-            onCheckedChange = { checked ->
-                scope.launch {
-                    context.dataStore.edit {
-                        it[notifyUnremindedKey] =
-                            checked
-                    }
-                }
-            },
+            onCheckedChange = { checked -> updateSettings { it.copy(notifyUnreminded = checked) } },
         )
 
         var showDurationDialog by remember { mutableStateOf(false) }
@@ -811,7 +714,7 @@ fun CalendarSettingsGroup(
                 currentMinutes = unremindedMinutesBefore,
                 onDismiss = { showDurationDialog = false },
                 onDurationSelected = { minutes ->
-                    scope.launch { context.dataStore.edit { it[unremindedMinutesKey] = minutes } }
+                    updateSettings { it.copy(unremindedMinutes = minutes) }
                     showDurationDialog = false
                 },
             )
@@ -824,14 +727,7 @@ fun CalendarSettingsGroup(
             title = "Day-of alerts",
             checked = dayOfAllDay,
             enabled = isGroupEnabled,
-            onCheckedChange = { checked ->
-                scope.launch {
-                    context.dataStore.edit {
-                        it[dayOfKey] =
-                            checked
-                    }
-                }
-            },
+            onCheckedChange = { checked -> updateSettings { it.copy(dayOf = checked) } },
         )
 
         var showDayOfTimeDialog by remember { mutableStateOf(false) }
@@ -849,9 +745,7 @@ fun CalendarSettingsGroup(
                 initialTime = dayOfTime,
                 onDismiss = { showDayOfTimeDialog = false },
                 onTimeSelected = { time ->
-                    scope.launch {
-                        context.dataStore.edit { it[dayOfTimeKey] = time.toSecondOfDay() }
-                    }
+                    updateSettings { it.copy(dayOfTime = time.toSecondOfDay()) }
                     showDayOfTimeDialog = false
                 },
             )
@@ -864,14 +758,7 @@ fun CalendarSettingsGroup(
             title = "Day-before alerts",
             checked = dayBeforeAllDay,
             enabled = isGroupEnabled,
-            onCheckedChange = { checked ->
-                scope.launch {
-                    context.dataStore.edit {
-                        it[dayBeforeKey] =
-                            checked
-                    }
-                }
-            },
+            onCheckedChange = { checked -> updateSettings { it.copy(dayBefore = checked) } },
         )
 
         var showDayBeforeTimeDialog by remember { mutableStateOf(false) }
@@ -889,13 +776,56 @@ fun CalendarSettingsGroup(
                 initialTime = dayBeforeTime,
                 onDismiss = { showDayBeforeTimeDialog = false },
                 onTimeSelected = { time ->
-                    scope.launch {
-                        context.dataStore.edit {
-                            it[dayBeforeTimeKey] =
-                                time.toSecondOfDay()
+                    updateSettings { it.copy(dayBeforeTime = time.toSecondOfDay()) }
+                    showDayBeforeTimeDialog = false
+                },
+            )
+        }
+    }
+
+    PreferenceCategory(title = "Multi-Day Events")
+    SettingsGroup {
+        var showMultiDayDialog by remember { mutableStateOf(false) }
+
+        DependentValuePreference(
+            title = "Alert frequency",
+            subtitle = multiDayMode.label,
+            enabled = isGroupEnabled,
+            onClick = { showMultiDayDialog = true },
+        )
+
+        if (showMultiDayDialog) {
+            AlertDialog(
+                onDismissRequest = { showMultiDayDialog = false },
+                title = { Text("Multi-Day Alert Mode") },
+                text = {
+                    Column {
+                        MultiDayAlertMode.values().forEach { mode ->
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            updateSettings { it.copy(multiDayMode = mode) }
+                                            showMultiDayDialog = false
+                                        }.padding(vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                RadioButton(
+                                    selected = multiDayMode == mode,
+                                    onClick = {
+                                        updateSettings { it.copy(multiDayMode = mode) }
+                                        showMultiDayDialog = false
+                                    },
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(mode.label)
+                            }
                         }
                     }
-                    showDayBeforeTimeDialog = false
+                },
+                confirmButton = {
+                    TextButton(onClick = { showMultiDayDialog = false }) { Text("Cancel") }
                 },
             )
         }
@@ -930,9 +860,7 @@ fun PermissionSwitchPreference(
                 }
             }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val launcher =
@@ -967,7 +895,7 @@ fun ColorPreference(
     selectedColor: Int,
     onColorSelected: (Int) -> Unit,
 ) {
-    val pebbleColors = Alert.PEBBLE_COLORS
+    val pebbleColors = SettingsRepository.PEBBLE_COLORS
 
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Text(
@@ -993,9 +921,7 @@ fun ColorPreference(
                             .border(
                                 width = if (pColor.toInt() == selectedColor) 3.dp else 0.dp,
                                 color =
-                                    if (pColor.toInt() ==
-                                        selectedColor
-                                    ) {
+                                    if (pColor.toInt() == selectedColor) {
                                         MaterialTheme.colorScheme.onSurface
                                     } else {
                                         Color.Transparent

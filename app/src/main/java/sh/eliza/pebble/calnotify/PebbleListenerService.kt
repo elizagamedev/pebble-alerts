@@ -17,11 +17,17 @@ class PebbleListenerService : BasePebbleListenerService() {
         return ReceiveResult.Ack
     }
 
-    override fun onAppOpened(watchappUUID: UUID, watch: WatchIdentifier) {
+    override fun onAppOpened(
+        watchappUUID: UUID,
+        watch: WatchIdentifier,
+    ) {
         Log.d("PebbleListenerService", "App  $watchappUUID on the watch $watch opened")
     }
 
-    override fun onAppClosed(watchappUUID: UUID, watch: WatchIdentifier) {
+    override fun onAppClosed(
+        watchappUUID: UUID,
+        watch: WatchIdentifier,
+    ) {
         Log.d("PebbleListenerService", "App  $watchappUUID on the watch $watch closed")
     }
 }
