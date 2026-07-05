@@ -9,46 +9,22 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import java.time.LocalTime
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 private val CALENDAR_ENABLE_REGEX = Regex("""^calendar_(\d+)_enable$""")
 
-private const val DEFAULT_DAY_OF_TIME = 9 * 3600 // 9:00 AM
-private const val DEFAULT_DAY_BEFORE_TIME = 18 * 3600 // 6:00 PM
-private const val DEFAULT_UNREMINDED_MINUTES = 10
+private val DEFAULT_DAY_OF_TIME = LocalTime.of(9, 0) // 9:00 AM
+private val DEFAULT_DAY_BEFORE_TIME = LocalTime.of(18, 0) // 6:00 PM
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
-
-data class ContactAlertConfig(
-    val timeOnDay: LocalTime?,
-    val timeDayBefore: LocalTime?,
-    val color: UByte,
-) {
-    companion object {
-        fun createFromSettings(settings: ContactSettings): ContactAlertConfig =
-            ContactAlertConfig(
-                timeOnDay =
-                    if (settings.dayOf) {
-                        LocalTime.ofSecondOfDay(
-                            settings.dayOfTime.toLong(),
-                        )
-                    } else {
-                        null
-                    },
-                timeDayBefore =
-                    if (settings.dayBefore) {
-                        LocalTime.ofSecondOfDay(
-                            settings.dayBeforeTime.toLong(),
-                        )
-                    } else {
-                        null
-                    },
-                color = settings.color.toUByte(),
-            )
-    }
-}
 
 enum class MultiDayAlertMode(
     val label: String,
@@ -58,38 +34,6 @@ enum class MultiDayAlertMode(
     EVERY_DAY("Alert every day"),
 }
 
-data class CalendarAlertConfig(
-    val defaultAlertOffsetMinutes: Int?,
-    val timeOnDay: LocalTime?,
-    val timeDayBefore: LocalTime?,
-    val multiDayMode: MultiDayAlertMode = MultiDayAlertMode.OFF,
-) {
-    companion object {
-        fun createFromSettings(settings: CalendarSettings): CalendarAlertConfig =
-            CalendarAlertConfig(
-                defaultAlertOffsetMinutes =
-                    if (settings.notifyUnreminded) settings.unremindedMinutes else null,
-                timeOnDay =
-                    if (settings.dayOf) {
-                        LocalTime.ofSecondOfDay(
-                            settings.dayOfTime.toLong(),
-                        )
-                    } else {
-                        null
-                    },
-                timeDayBefore =
-                    if (settings.dayBefore) {
-                        LocalTime.ofSecondOfDay(
-                            settings.dayBeforeTime.toLong(),
-                        )
-                    } else {
-                        null
-                    },
-                multiDayMode = settings.multiDayMode,
-            )
-    }
-}
-
 enum class ContactEventType(
     val label: String,
 ) {
@@ -97,31 +41,42 @@ enum class ContactEventType(
     ANNIVERSARY("Anniversaries"),
 }
 
+data class GeneralSettings(
+    val syncInterval: Duration,
+) {
+    fun updatePrefs(prefs: MutablePreferences) {
+        prefs[intPreferencesKey("general_sync_interval")] = syncInterval.inWholeSeconds.toInt()
+    }
+
+    companion object {
+        val DEFAULT =
+            GeneralSettings(
+                syncInterval = 60.minutes,
+            )
+
+        fun createFromPrefs(prefs: Preferences): GeneralSettings =
+            GeneralSettings(
+                syncInterval =
+                    prefs[intPreferencesKey("general_sync_interval")]?.seconds
+                        ?: DEFAULT.syncInterval,
+            )
+    }
+}
+
 data class AppSettings(
+    val generalSettings: GeneralSettings,
     val calendarSettings: Map<Long, CalendarSettings>,
     val contactSettings: Map<ContactEventType, ContactSettings>,
-) {
-    val calendarConfigs: Map<Long, CalendarAlertConfig>
-        get() =
-            calendarSettings
-                .filterValues { it.enabled }
-                .mapValues { (_, settings) -> CalendarAlertConfig.createFromSettings(settings) }
-
-    val contactConfigs: Map<ContactEventType, ContactAlertConfig>
-        get() =
-            contactSettings.mapValues { (_, settings) ->
-                ContactAlertConfig.createFromSettings(settings)
-            }
-}
+)
 
 data class CalendarSettings(
     val enabled: Boolean,
     val notifyUnreminded: Boolean,
-    val unremindedMinutes: Int,
+    val unremindedOffset: Duration,
     val dayOf: Boolean,
-    val dayOfTime: Int,
+    val dayOfTime: LocalTime,
     val dayBefore: Boolean,
-    val dayBeforeTime: Int,
+    val dayBeforeTime: LocalTime,
     val multiDayMode: MultiDayAlertMode,
 ) {
     fun updatePrefs(
@@ -130,11 +85,12 @@ data class CalendarSettings(
     ) {
         prefs[booleanPreferencesKey("calendar_${id}_enable")] = enabled
         prefs[booleanPreferencesKey("calendar_${id}_notify_unreminded")] = notifyUnreminded
-        prefs[intPreferencesKey("calendar_${id}_unreminded_minutes")] = unremindedMinutes
+        prefs[intPreferencesKey("calendar_${id}_unreminded_offset")] =
+            unremindedOffset.inWholeSeconds.toInt()
         prefs[booleanPreferencesKey("calendar_${id}_day_of")] = dayOf
-        prefs[intPreferencesKey("calendar_${id}_day_of_time")] = dayOfTime
+        prefs[intPreferencesKey("calendar_${id}_day_of_time")] = dayOfTime.toSecondOfDay()
         prefs[booleanPreferencesKey("calendar_${id}_day_before")] = dayBefore
-        prefs[intPreferencesKey("calendar_${id}_day_before_time")] = dayBeforeTime
+        prefs[intPreferencesKey("calendar_${id}_day_before_time")] = dayBeforeTime.toSecondOfDay()
         prefs[stringPreferencesKey("calendar_${id}_multi_day_mode")] = multiDayMode.name
     }
 
@@ -143,7 +99,7 @@ data class CalendarSettings(
             CalendarSettings(
                 enabled = false,
                 notifyUnreminded = false,
-                unremindedMinutes = DEFAULT_UNREMINDED_MINUTES,
+                unremindedOffset = 10.minutes,
                 dayOf = false,
                 dayOfTime = DEFAULT_DAY_OF_TIME,
                 dayBefore = false,
@@ -170,17 +126,20 @@ data class CalendarSettings(
                 notifyUnreminded =
                     prefs[booleanPreferencesKey("calendar_${id}_notify_unreminded")]
                         ?: DEFAULT.notifyUnreminded,
-                unremindedMinutes =
-                    prefs[intPreferencesKey("calendar_${id}_unreminded_minutes")]
-                        ?: DEFAULT.unremindedMinutes,
+                unremindedOffset =
+                    prefs[intPreferencesKey("calendar_${id}_unreminded_offset")]?.seconds
+                        ?: DEFAULT.unremindedOffset,
                 dayOf = prefs[booleanPreferencesKey("calendar_${id}_day_of")] ?: DEFAULT.dayOf,
                 dayOfTime =
-                    prefs[intPreferencesKey("calendar_${id}_day_of_time")] ?: DEFAULT.dayOfTime,
+                    prefs[intPreferencesKey("calendar_${id}_day_of_time")]?.let {
+                        LocalTime.ofSecondOfDay(it.toLong())
+                    } ?: DEFAULT.dayOfTime,
                 dayBefore =
                     prefs[booleanPreferencesKey("calendar_${id}_day_before")] ?: DEFAULT.dayBefore,
                 dayBeforeTime =
-                    prefs[intPreferencesKey("calendar_${id}_day_before_time")]
-                        ?: DEFAULT.dayBeforeTime,
+                    prefs[intPreferencesKey("calendar_${id}_day_before_time")]?.let {
+                        LocalTime.ofSecondOfDay(it.toLong())
+                    } ?: DEFAULT.dayBeforeTime,
                 multiDayMode = multiDayMode,
             )
         }
@@ -190,10 +149,10 @@ data class CalendarSettings(
 data class ContactSettings(
     val timelinePins: Boolean,
     val dayOf: Boolean,
-    val dayOfTime: Int,
+    val dayOfTime: LocalTime,
     val dayBefore: Boolean,
-    val dayBeforeTime: Int,
-    val color: Int,
+    val dayBeforeTime: LocalTime,
+    val color: PebbleColor,
 ) {
     fun updatePrefs(
         prefs: MutablePreferences,
@@ -202,10 +161,10 @@ data class ContactSettings(
         val id = type.name
         prefs[booleanPreferencesKey("contacts_${id}_timeline_pins")] = timelinePins
         prefs[booleanPreferencesKey("contacts_${id}_day_of")] = dayOf
-        prefs[intPreferencesKey("contacts_${id}_day_of_time")] = dayOfTime
+        prefs[intPreferencesKey("contacts_${id}_day_of_time")] = dayOfTime.toSecondOfDay()
         prefs[booleanPreferencesKey("contacts_${id}_day_before")] = dayBefore
-        prefs[intPreferencesKey("contacts_${id}_day_before_time")] = dayBeforeTime
-        prefs[intPreferencesKey("contacts_${id}_color")] = color
+        prefs[intPreferencesKey("contacts_${id}_day_before_time")] = dayBeforeTime.toSecondOfDay()
+        prefs[intPreferencesKey("contacts_${id}_color")] = color.toInt()
     }
 
     companion object {
@@ -216,7 +175,7 @@ data class ContactSettings(
                 dayOfTime = DEFAULT_DAY_OF_TIME,
                 dayBefore = false,
                 dayBeforeTime = DEFAULT_DAY_BEFORE_TIME,
-                color = SettingsRepository.PEBBLE_COLORS[3].toInt(), // Magenta
+                color = PebbleColor(243), // Magenta
             )
 
         fun createFromPrefs(
@@ -230,13 +189,18 @@ data class ContactSettings(
                         ?: DEFAULT.timelinePins,
                 dayOf = prefs[booleanPreferencesKey("contacts_${id}_day_of")] ?: DEFAULT.dayOf,
                 dayOfTime =
-                    prefs[intPreferencesKey("contacts_${id}_day_of_time")] ?: DEFAULT.dayOfTime,
+                    prefs[intPreferencesKey("contacts_${id}_day_of_time")]?.let {
+                        LocalTime.ofSecondOfDay(it.toLong())
+                    } ?: DEFAULT.dayOfTime,
                 dayBefore =
                     prefs[booleanPreferencesKey("contacts_${id}_day_before")] ?: DEFAULT.dayBefore,
                 dayBeforeTime =
-                    prefs[intPreferencesKey("contacts_${id}_day_before_time")]
-                        ?: DEFAULT.dayBeforeTime,
-                color = prefs[intPreferencesKey("contacts_${id}_color")] ?: DEFAULT.color,
+                    prefs[intPreferencesKey("contacts_${id}_day_before_time")]?.let {
+                        LocalTime.ofSecondOfDay(it.toLong())
+                    } ?: DEFAULT.dayBeforeTime,
+                color =
+                    prefs[intPreferencesKey("contacts_${id}_color")]?.let { PebbleColor(it) }
+                        ?: DEFAULT.color,
             )
         }
     }
@@ -244,51 +208,48 @@ data class ContactSettings(
 
 class SettingsRepository(
     private val dataStore: DataStore<Preferences>,
+    scope: CoroutineScope,
 ) {
-    companion object {
-        val PEBBLE_COLORS =
-            listOf(
-                0b11110000u.toUByte(), // Red
-                0b11001100u.toUByte(), // Green
-                0b11000011u.toUByte(), // Blue
-                0b11110011u.toUByte(), // Magenta
-                0b11001111u.toUByte(), // Cyan
-                0b11111100u.toUByte(), // Yellow
-                0b11111000u.toUByte(), // Orange
-                0b11111111u.toUByte(), // White
-            )
-    }
+    val appSettingsFlow: StateFlow<AppSettings?> =
+        dataStore.data
+            .map<Preferences, AppSettings?> { prefs ->
+                val calendarSettings =
+                    prefs
+                        .asMap()
+                        .keys
+                        .mapNotNull {
+                            CALENDAR_ENABLE_REGEX
+                                .matchEntire(
+                                    it.name,
+                                )?.groupValues
+                                ?.get(1)
+                                ?.toLong()
+                        }.associateWith { id -> CalendarSettings.createFromPrefs(prefs, id) }
 
-    val appSettingsFlow: Flow<AppSettings> =
-        dataStore.data.map { prefs ->
-            val calendarSettings = mutableMapOf<Long, CalendarSettings>()
+                val contactSettings =
+                    ContactEventType.entries.associateWith { type ->
+                        ContactSettings.createFromPrefs(prefs, type)
+                    }
 
-            prefs.asMap().forEach { (key, value) ->
-                val match = CALENDAR_ENABLE_REGEX.matchEntire(key.name)
-                if (match != null) {
-                    val id = match.groupValues[1].toLong()
-                    val enabled = value == true
+                val generalSettings = GeneralSettings.createFromPrefs(prefs)
 
-                    calendarSettings[id] = CalendarSettings.createFromPrefs(prefs, id)
-                }
-            }
-
-            val contactSettings =
-                mapOf(
-                    ContactEventType.BIRTHDAY to
-                        ContactSettings.createFromPrefs(prefs, ContactEventType.BIRTHDAY),
-                    ContactEventType.ANNIVERSARY to
-                        ContactSettings.createFromPrefs(prefs, ContactEventType.ANNIVERSARY),
+                AppSettings(
+                    generalSettings = generalSettings,
+                    calendarSettings = calendarSettings,
+                    contactSettings = contactSettings,
                 )
-
-            AppSettings(
-                calendarSettings = calendarSettings,
-                contactSettings = contactSettings,
+            }.stateIn(
+                scope = scope,
+                started = SharingStarted.WhileSubscribed(5000),
+                initialValue = null,
             )
-        }
 
-    fun getCalendarSettingsFlow(id: Long): Flow<CalendarSettings> =
-        dataStore.data.map { prefs -> CalendarSettings.createFromPrefs(prefs, id) }
+    suspend fun updateGeneralSettings(transform: (GeneralSettings) -> GeneralSettings) {
+        dataStore.edit { prefs ->
+            val current = GeneralSettings.createFromPrefs(prefs)
+            transform(current).updatePrefs(prefs)
+        }
+    }
 
     suspend fun updateCalendarSettings(
         id: Long,
@@ -299,9 +260,6 @@ class SettingsRepository(
             transform(current).updatePrefs(prefs, id)
         }
     }
-
-    fun getContactSettingsFlow(type: ContactEventType): Flow<ContactSettings> =
-        dataStore.data.map { prefs -> ContactSettings.createFromPrefs(prefs, type) }
 
     suspend fun updateContactSettings(
         type: ContactEventType,

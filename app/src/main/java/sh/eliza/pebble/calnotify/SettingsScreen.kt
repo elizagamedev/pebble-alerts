@@ -4,10 +4,13 @@ import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
+import android.icu.text.MeasureFormat
+import android.icu.util.Measure
+import android.icu.util.MeasureUnit
 import android.net.Uri
 import android.provider.CalendarContract
 import android.provider.Settings
+import android.text.format.DateFormat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -16,15 +19,16 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -66,7 +70,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -75,12 +78,44 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import sh.eliza.pebble.calnotify.PebbleColor.Companion.PEBBLE_COLORS
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
-import java.time.format.FormatStyle
+import java.util.Locale
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
+
+fun formatDuration(duration: Duration): String {
+    val minutes = duration.inWholeMinutes.toInt()
+    if (minutes == 0) return "At time of event"
+    val fmt = MeasureFormat.getInstance(Locale.getDefault(), MeasureFormat.FormatWidth.WIDE)
+    return if (minutes < 60) {
+        fmt.format(Measure(minutes, MeasureUnit.MINUTE))
+    } else if (minutes % 60 == 0) {
+        fmt.format(Measure(minutes / 60, MeasureUnit.HOUR))
+    } else {
+        fmt.formatMeasures(
+            Measure(minutes / 60, MeasureUnit.HOUR),
+            Measure(minutes % 60, MeasureUnit.MINUTE),
+        )
+    }
+}
+
+fun formatTime(
+    context: Context,
+    time: LocalTime,
+): String {
+    val skeleton = if (DateFormat.is24HourFormat(context)) "Hm" else "hma"
+    val pattern = DateFormat.getBestDateTimePattern(Locale.getDefault(), skeleton)
+    return time.format(DateTimeFormatter.ofPattern(pattern))
+}
 
 data class CalendarInfo(
     val id: Long,
@@ -89,10 +124,7 @@ data class CalendarInfo(
 )
 
 fun getDeviceCalendars(context: Context): List<CalendarInfo> {
-    if (
-        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) !=
-        PackageManager.PERMISSION_GRANTED
-    ) {
+    if (!context.hasPermission(Manifest.permission.READ_CALENDAR)) {
         return emptyList()
     }
 
@@ -142,7 +174,11 @@ fun SettingsScreen(repository: SettingsRepository) {
 
     NavHost(navController = navController, startDestination = "home") {
         composable("home") {
-            HomeScreen(openSettings = openSettings, onNavigate = { navController.navigate(it) })
+            HomeScreen(
+                repository = repository,
+                openSettings = openSettings,
+                onNavigate = { navController.navigate(it) },
+            )
         }
         composable(
             "calendar/{id}?name={name}&accountName={accountName}",
@@ -185,6 +221,7 @@ fun SettingsScreen(repository: SettingsRepository) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
+    repository: SettingsRepository,
     openSettings: () -> Unit,
     onNavigate: (String) -> Unit,
 ) {
@@ -192,37 +229,31 @@ fun HomeScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
 
     var hasCalendarPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.READ_CALENDAR,
-            ) == PackageManager.PERMISSION_GRANTED,
-        )
+        mutableStateOf(context.hasPermission(Manifest.permission.READ_CALENDAR))
     }
     var hasContactsPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.READ_CONTACTS,
-            ) == PackageManager.PERMISSION_GRANTED,
-        )
+        mutableStateOf(context.hasPermission(Manifest.permission.READ_CONTACTS))
     }
     var calendars by remember { mutableStateOf(getDeviceCalendars(context)) }
+
+    val generalSettingsFlow =
+        remember(repository) {
+            repository.appSettingsFlow
+                .filterNotNull()
+                .map { it.generalSettings }
+                .distinctUntilChanged()
+        }
+    val generalSettings by generalSettingsFlow.collectAsState(initial = GeneralSettings.DEFAULT)
+    val syncInterval = generalSettings.syncInterval
+    var showSyncIntervalDialog by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
 
     DisposableEffect(lifecycleOwner) {
         val observer =
             LifecycleEventObserver { _, event ->
                 if (event == Lifecycle.Event.ON_RESUME) {
-                    hasCalendarPermission =
-                        ContextCompat.checkSelfPermission(
-                            context,
-                            Manifest.permission.READ_CALENDAR,
-                        ) == PackageManager.PERMISSION_GRANTED
-                    hasContactsPermission =
-                        ContextCompat.checkSelfPermission(
-                            context,
-                            Manifest.permission.READ_CONTACTS,
-                        ) == PackageManager.PERMISSION_GRANTED
+                    hasCalendarPermission = context.hasPermission(Manifest.permission.READ_CALENDAR)
+                    hasContactsPermission = context.hasPermission(Manifest.permission.READ_CONTACTS)
                     calendars = getDeviceCalendars(context)
                 }
             }
@@ -241,6 +272,16 @@ fun HomeScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(bottom = 24.dp),
         ) {
+            PreferenceCategory(title = "General")
+            SettingsGroup {
+                DependentValuePreference(
+                    title = "Sync interval",
+                    subtitle = formatDuration(syncInterval),
+                    enabled = true,
+                    onClick = { showSyncIntervalDialog = true },
+                )
+            }
+
             PreferenceCategory(title = "Permissions")
             SettingsGroup {
                 PermissionSwitchPreference(
@@ -331,6 +372,30 @@ fun HomeScreen(
                 }
             }
         }
+
+        if (showSyncIntervalDialog) {
+            DurationPickerDialog(
+                title = "Sync interval",
+                options =
+                    listOf(
+                        15.minutes,
+                        30.minutes,
+                        1.hours,
+                        3.hours,
+                        6.hours,
+                        12.hours,
+                        24.hours,
+                    ),
+                currentDuration = syncInterval,
+                onDismiss = { showSyncIntervalDialog = false },
+                onConfirm = { duration ->
+                    coroutineScope.launch {
+                        repository.updateGeneralSettings { it.copy(syncInterval = duration) }
+                    }
+                    showSyncIntervalDialog = false
+                },
+            )
+        }
     }
 }
 
@@ -415,15 +480,14 @@ fun ContactsSettingsGroup(
     repository: SettingsRepository,
     eventType: ContactEventType,
 ) {
-    val flow = remember(repository, eventType) { repository.getContactSettingsFlow(eventType) }
+    val flow =
+        remember(repository, eventType) {
+            repository.appSettingsFlow
+                .filterNotNull()
+                .map { it.contactSettings[eventType] ?: ContactSettings.DEFAULT }
+                .distinctUntilChanged()
+        }
     val settings by flow.collectAsState(initial = ContactSettings.DEFAULT)
-
-    val timelinePins = settings.timelinePins
-    val dayOf = settings.dayOf
-    val dayOfTime = LocalTime.ofSecondOfDay(settings.dayOfTime.toLong())
-    val dayBefore = settings.dayBefore
-    val dayBeforeTime = LocalTime.ofSecondOfDay(settings.dayBeforeTime.toLong())
-    val selectedColor = settings.color
 
     val scope = rememberCoroutineScope()
 
@@ -435,72 +499,97 @@ fun ContactsSettingsGroup(
     SettingsGroup {
         SwitchPreference(
             title = "Add timeline pins",
-            checked = timelinePins,
+            checked = settings.timelinePins,
             onCheckedChange = { checked -> updateSettings { it.copy(timelinePins = checked) } },
         )
 
-        ColorPreference(
-            title = "Color",
-            selectedColor = selectedColor,
-            onColorSelected = { colorArgb -> updateSettings { it.copy(color = colorArgb) } },
-        )
-    }
+        var showColorDialog by remember { mutableStateOf(false) }
 
-    PreferenceCategory(title = "Day-of Alerts")
-    SettingsGroup {
-        SwitchPreference(
-            title = "Day-of alerts",
-            checked = dayOf,
-            onCheckedChange = { checked -> updateSettings { it.copy(dayOf = checked) } },
-        )
-
-        var showDayOfDialog by remember { mutableStateOf(false) }
-        val timeFormatter = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
-
-        DependentValuePreference(
-            title = "Alert time",
-            subtitle = dayOfTime.format(timeFormatter),
-            enabled = dayOf,
-            onClick = { showDayOfDialog = true },
+        ListItem(
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+            headlineContent = { Text("Accent color") },
+            trailingContent = {
+                Box(
+                    modifier = Modifier.size(48.dp),
+                    contentAlignment = androidx.compose.ui.Alignment.Center,
+                ) {
+                    Box(
+                        modifier =
+                            Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(settings.color.toAndroidColorCorrected()),
+                    )
+                }
+            },
+            modifier = Modifier.clickable { showColorDialog = true },
         )
 
-        if (showDayOfDialog) {
-            TimePickerDialog(
-                initialTime = dayOfTime,
-                onDismiss = { showDayOfDialog = false },
-                onTimeSelected = { time ->
-                    updateSettings { it.copy(dayOfTime = time.toSecondOfDay()) }
-                    showDayOfDialog = false
-                },
+        if (showColorDialog) {
+            ColorPickerDialog(
+                selectedColor = settings.color,
+                onColorSelected = { colorArgb -> updateSettings { it.copy(color = colorArgb) } },
+                onDismiss = { showColorDialog = false },
             )
         }
     }
 
-    PreferenceCategory(title = "Day-before Alerts")
+    DayAlertSettingsGroup(
+        title = "Day-of alerts",
+        switchTitle = "Day-of alerts",
+        checked = settings.dayOf,
+        onCheckedChange = { checked -> updateSettings { it.copy(dayOf = checked) } },
+        time = settings.dayOfTime,
+        onTimeSelected = { time -> updateSettings { it.copy(dayOfTime = time) } },
+        isGroupEnabled = true,
+    )
+
+    DayAlertSettingsGroup(
+        title = "Day-before alerts",
+        switchTitle = "Day-before alerts",
+        checked = settings.dayBefore,
+        onCheckedChange = { checked -> updateSettings { it.copy(dayBefore = checked) } },
+        time = settings.dayBeforeTime,
+        onTimeSelected = { time -> updateSettings { it.copy(dayBeforeTime = time) } },
+        isGroupEnabled = true,
+    )
+}
+
+@Composable
+fun DayAlertSettingsGroup(
+    title: String,
+    switchTitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    time: LocalTime,
+    onTimeSelected: (LocalTime) -> Unit,
+    isGroupEnabled: Boolean,
+) {
+    PreferenceCategory(title = title)
     SettingsGroup {
         SwitchPreference(
-            title = "Day-before alerts",
-            checked = dayBefore,
-            onCheckedChange = { checked -> updateSettings { it.copy(dayBefore = checked) } },
+            title = switchTitle,
+            checked = checked,
+            enabled = isGroupEnabled,
+            onCheckedChange = onCheckedChange,
         )
 
-        var showDayBeforeDialog by remember { mutableStateOf(false) }
-        val timeFormatter = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
-
+        var showTimeDialog by remember { mutableStateOf(false) }
+        val context = LocalContext.current
         DependentValuePreference(
             title = "Alert time",
-            subtitle = dayBeforeTime.format(timeFormatter),
-            enabled = dayBefore,
-            onClick = { showDayBeforeDialog = true },
+            subtitle = formatTime(context, time),
+            enabled = isGroupEnabled && checked,
+            onClick = { showTimeDialog = true },
         )
 
-        if (showDayBeforeDialog) {
+        if (showTimeDialog) {
             TimePickerDialog(
-                initialTime = dayBeforeTime,
-                onDismiss = { showDayBeforeDialog = false },
-                onTimeSelected = { time ->
-                    updateSettings { it.copy(dayBeforeTime = time.toSecondOfDay()) }
-                    showDayBeforeDialog = false
+                initialTime = time,
+                onDismiss = { showTimeDialog = false },
+                onTimeSelected = { newTime ->
+                    onTimeSelected(newTime)
+                    showTimeDialog = false
                 },
             )
         }
@@ -581,38 +670,36 @@ fun DependentValuePreference(
 
 @Composable
 fun DurationPickerDialog(
-    currentMinutes: Int,
+    title: String,
+    options: List<Duration>,
+    currentDuration: Duration,
     onDismiss: () -> Unit,
-    onDurationSelected: (Int) -> Unit,
+    onConfirm: (Duration) -> Unit,
 ) {
-    val options = listOf(0, 5, 10, 15, 30, 60, 120)
-
-    fun labelFor(mins: Int) = if (mins == 0) "Off" else "$mins minutes"
-
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Minutes before event") },
+        title = { Text(title) },
         text = {
             Column(modifier = Modifier.selectableGroup()) {
-                options.forEach { mins ->
+                options.forEach { duration ->
                     Row(
                         Modifier
                             .fillMaxWidth()
                             .height(56.dp)
                             .selectable(
-                                selected = (mins == currentMinutes),
-                                onClick = { onDurationSelected(mins) },
+                                selected = (duration == currentDuration),
+                                onClick = { onConfirm(duration) },
                                 role = Role.RadioButton,
                             ).padding(horizontal = 16.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(
-                            selected = (mins == currentMinutes),
-                            onClick = null, // null recommended for accessibility with selectable
+                            selected = (duration == currentDuration),
+                            onClick = null,
                         )
                         Spacer(modifier = Modifier.width(16.dp))
                         Text(
-                            text = labelFor(mins),
+                            text = formatDuration(duration),
                             style = MaterialTheme.typography.bodyLarge,
                         )
                     }
@@ -663,17 +750,14 @@ fun CalendarSettingsGroup(
     enabled: Boolean,
     repository: SettingsRepository,
 ) {
-    val flow = remember(repository, id) { repository.getCalendarSettingsFlow(id) }
+    val flow =
+        remember(repository, id) {
+            repository.appSettingsFlow
+                .filterNotNull()
+                .map { it.calendarSettings[id] ?: CalendarSettings.DEFAULT }
+                .distinctUntilChanged()
+        }
     val settings by flow.collectAsState(initial = CalendarSettings.DEFAULT)
-
-    val enableNotifications = settings.enabled
-    val notifyUnreminded = settings.notifyUnreminded
-    val unremindedMinutesBefore = settings.unremindedMinutes
-    val dayOfAllDay = settings.dayOf
-    val dayOfTime = LocalTime.ofSecondOfDay(settings.dayOfTime.toLong())
-    val dayBeforeAllDay = settings.dayBefore
-    val dayBeforeTime = LocalTime.ofSecondOfDay(settings.dayBeforeTime.toLong())
-    val multiDayMode = settings.multiDayMode
 
     val scope = rememberCoroutineScope()
 
@@ -681,123 +765,95 @@ fun CalendarSettingsGroup(
         scope.launch { repository.updateCalendarSettings(id, transform) }
     }
 
-    val isGroupEnabled = enabled && enableNotifications
+    val isGroupEnabled = enabled && settings.enabled
 
     SettingsGroup {
         SwitchPreference(
-            title = "Enable notifications",
-            checked = if (enabled) enableNotifications else false,
+            title = "Enable alerts",
+            checked = if (enabled) settings.enabled else false,
             enabled = enabled,
             onCheckedChange = { checked -> updateSettings { it.copy(enabled = checked) } },
         )
     }
 
-    PreferenceCategory(title = "Timed Events")
+    PreferenceCategory(title = "Events without reminders")
     SettingsGroup {
         SwitchPreference(
-            title = "Notify for un-reminded events",
-            checked = notifyUnreminded,
+            title = "Alert for un-reminded events",
+            checked = settings.notifyUnreminded,
             enabled = isGroupEnabled,
             onCheckedChange = { checked -> updateSettings { it.copy(notifyUnreminded = checked) } },
         )
 
         var showDurationDialog by remember { mutableStateOf(false) }
         DependentValuePreference(
-            title = "Fallback alert time",
-            subtitle = "$unremindedMinutesBefore minutes before",
-            enabled = isGroupEnabled && notifyUnreminded,
+            title = "Alert time before event",
+            subtitle = formatDuration(settings.unremindedOffset),
+            enabled = isGroupEnabled && settings.notifyUnreminded,
             onClick = { showDurationDialog = true },
         )
 
         if (showDurationDialog) {
             DurationPickerDialog(
-                currentMinutes = unremindedMinutesBefore,
+                title = "Alert time before event",
+                options =
+                    listOf(
+                        0.minutes,
+                        5.minutes,
+                        10.minutes,
+                        15.minutes,
+                        30.minutes,
+                        1.hours,
+                        3.hours,
+                        6.hours,
+                        12.hours,
+                        24.hours,
+                    ),
+                currentDuration = settings.unremindedOffset,
                 onDismiss = { showDurationDialog = false },
-                onDurationSelected = { minutes ->
-                    updateSettings { it.copy(unremindedMinutes = minutes) }
+                onConfirm = { duration ->
+                    updateSettings { it.copy(unremindedOffset = duration) }
                     showDurationDialog = false
                 },
             )
         }
     }
 
-    PreferenceCategory(title = "All-Day Events (Day-of)")
-    SettingsGroup {
-        SwitchPreference(
-            title = "Day-of alerts",
-            checked = dayOfAllDay,
-            enabled = isGroupEnabled,
-            onCheckedChange = { checked -> updateSettings { it.copy(dayOf = checked) } },
-        )
+    DayAlertSettingsGroup(
+        title = "All-day events (day-of)",
+        switchTitle = "Day-of alerts",
+        checked = settings.dayOf,
+        onCheckedChange = { checked -> updateSettings { it.copy(dayOf = checked) } },
+        time = settings.dayOfTime,
+        onTimeSelected = { time -> updateSettings { it.copy(dayOfTime = time) } },
+        isGroupEnabled = isGroupEnabled,
+    )
 
-        var showDayOfTimeDialog by remember { mutableStateOf(false) }
-        val timeFormatter = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
+    DayAlertSettingsGroup(
+        title = "All-day events (day-before)",
+        switchTitle = "Day-before alerts",
+        checked = settings.dayBefore,
+        onCheckedChange = { checked -> updateSettings { it.copy(dayBefore = checked) } },
+        time = settings.dayBeforeTime,
+        onTimeSelected = { time -> updateSettings { it.copy(dayBeforeTime = time) } },
+        isGroupEnabled = isGroupEnabled,
+    )
 
-        DependentValuePreference(
-            title = "Alert time",
-            subtitle = dayOfTime.format(timeFormatter),
-            enabled = isGroupEnabled && dayOfAllDay,
-            onClick = { showDayOfTimeDialog = true },
-        )
-
-        if (showDayOfTimeDialog) {
-            TimePickerDialog(
-                initialTime = dayOfTime,
-                onDismiss = { showDayOfTimeDialog = false },
-                onTimeSelected = { time ->
-                    updateSettings { it.copy(dayOfTime = time.toSecondOfDay()) }
-                    showDayOfTimeDialog = false
-                },
-            )
-        }
-    }
-
-    PreferenceCategory(title = "All-Day Events (Day-before)")
-    SettingsGroup {
-        SwitchPreference(
-            title = "Day-before alerts",
-            checked = dayBeforeAllDay,
-            enabled = isGroupEnabled,
-            onCheckedChange = { checked -> updateSettings { it.copy(dayBefore = checked) } },
-        )
-
-        var showDayBeforeTimeDialog by remember { mutableStateOf(false) }
-        val timeFormatter = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
-
-        DependentValuePreference(
-            title = "Alert time",
-            subtitle = dayBeforeTime.format(timeFormatter),
-            enabled = isGroupEnabled && dayBeforeAllDay,
-            onClick = { showDayBeforeTimeDialog = true },
-        )
-
-        if (showDayBeforeTimeDialog) {
-            TimePickerDialog(
-                initialTime = dayBeforeTime,
-                onDismiss = { showDayBeforeTimeDialog = false },
-                onTimeSelected = { time ->
-                    updateSettings { it.copy(dayBeforeTime = time.toSecondOfDay()) }
-                    showDayBeforeTimeDialog = false
-                },
-            )
-        }
-    }
-
-    PreferenceCategory(title = "Multi-Day Events")
+    PreferenceCategory(title = "Multi-day events")
     SettingsGroup {
         var showMultiDayDialog by remember { mutableStateOf(false) }
 
         DependentValuePreference(
             title = "Alert frequency",
-            subtitle = multiDayMode.label,
-            enabled = isGroupEnabled,
+            subtitle = settings.multiDayMode.label,
+            enabled = isGroupEnabled && (settings.dayOf || settings.dayBefore),
             onClick = { showMultiDayDialog = true },
         )
 
         if (showMultiDayDialog) {
             AlertDialog(
                 onDismissRequest = { showMultiDayDialog = false },
-                title = { Text("Multi-Day Alert Mode") },
+                title = { Text("Multi-day alert mode") },
                 text = {
                     Column {
                         MultiDayAlertMode.values().forEach { mode ->
@@ -812,7 +868,7 @@ fun CalendarSettingsGroup(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 RadioButton(
-                                    selected = multiDayMode == mode,
+                                    selected = mode == settings.multiDayMode,
                                     onClick = {
                                         updateSettings { it.copy(multiDayMode = mode) }
                                         showMultiDayDialog = false
@@ -841,22 +897,13 @@ fun PermissionSwitchPreference(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    var hasPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(
-                context,
-                permission,
-            ) == PackageManager.PERMISSION_GRANTED,
-        )
-    }
+    var hasPermission by remember { mutableStateOf(context.hasPermission(permission)) }
 
     DisposableEffect(lifecycleOwner) {
         val observer =
             LifecycleEventObserver { _, event ->
                 if (event == Lifecycle.Event.ON_RESUME) {
-                    hasPermission =
-                        ContextCompat.checkSelfPermission(context, permission) ==
-                        PackageManager.PERMISSION_GRANTED
+                    hasPermission = context.hasPermission(permission)
                 }
             }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -890,46 +937,46 @@ fun PermissionSwitchPreference(
 }
 
 @Composable
-fun ColorPreference(
-    title: String,
-    selectedColor: Int,
-    onColorSelected: (Int) -> Unit,
+fun ColorPickerDialog(
+    selectedColor: PebbleColor,
+    onColorSelected: (PebbleColor) -> Unit,
+    onDismiss: () -> Unit,
 ) {
-    val pebbleColors = SettingsRepository.PEBBLE_COLORS
-
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Text(
-            title,
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
-        Spacer(Modifier.height(8.dp))
-        LazyRow(
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            items(pebbleColors.size) { index ->
-                val pColor = pebbleColors[index]
-                val androidColor = pebbleToAndroidColor(pColor)
-                Box(
-                    modifier =
-                        Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(androidColor)
-                            .border(
-                                width = if (pColor.toInt() == selectedColor) 3.dp else 0.dp,
-                                color =
-                                    if (pColor.toInt() == selectedColor) {
-                                        MaterialTheme.colorScheme.onSurface
-                                    } else {
-                                        Color.Transparent
-                                    },
-                                shape = CircleShape,
-                            ).clickable { onColorSelected(pColor.toInt()) },
-                )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Accent color") },
+        text = {
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = 44.dp),
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(PEBBLE_COLORS.size) { index ->
+                    val color = PEBBLE_COLORS[index]
+                    Box(
+                        modifier =
+                            Modifier
+                                .aspectRatio(1f)
+                                .clip(CircleShape)
+                                .background(color.toAndroidColorCorrected())
+                                .border(
+                                    width = if (color == selectedColor) 3.dp else 0.dp,
+                                    color =
+                                        if (color == selectedColor) {
+                                            MaterialTheme.colorScheme.onSurface
+                                        } else {
+                                            Color.Transparent
+                                        },
+                                    shape = CircleShape,
+                                ).clickable {
+                                    onColorSelected(color)
+                                    onDismiss()
+                                },
+                    )
+                }
             }
-        }
-    }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
 }

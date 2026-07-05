@@ -1,5 +1,6 @@
 package sh.eliza.pebble.calnotify
 
+import android.Manifest
 import android.content.ContentUris
 import android.content.Context
 import android.provider.CalendarContract.Calendars
@@ -14,9 +15,11 @@ import java.time.LocalTime
 import java.time.MonthDay
 import java.time.ZoneId
 import java.time.ZoneOffset
-import java.time.ZonedDateTime
 import java.time.format.DateTimeParseException
 import java.time.temporal.ChronoUnit
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.toJavaDuration
 
 data class Alert(
     val id: UInt,
@@ -27,7 +30,7 @@ data class Alert(
     val startTime: Instant,
     val endTime: Instant,
     val alertTime: Instant,
-    val color: UByte,
+    val color: PebbleColor,
 ) {
     companion object {
         fun getUpcomingAlerts(
@@ -35,19 +38,19 @@ data class Alert(
             appSettings: AppSettings,
         ): Sequence<Alert> =
             (
-                getUpcomingCalendarAlerts(context, appSettings.calendarConfigs) +
-                    getUpcomingContactAlerts(context, appSettings.contactConfigs)
+                getUpcomingCalendarAlerts(context, appSettings.calendarSettings) +
+                    getUpcomingContactAlerts(context, appSettings.contactSettings)
             ).sortedWith(compareBy({ it.alertTime }, { it.id }))
 
         fun getUpcomingCalendarAlerts(
             context: Context,
-            configs: Map<Long, CalendarAlertConfig>,
-        ): Sequence<Alert> = getUpcomingCalendarAlertsInternal(context, configs)
+            calendarSettings: Map<Long, CalendarSettings>,
+        ): Sequence<Alert> = getUpcomingCalendarAlertsInternal(context, calendarSettings)
 
         fun getUpcomingContactAlerts(
             context: Context,
-            contactConfigs: Map<ContactEventType, ContactAlertConfig>,
-        ): Sequence<Alert> = getUpcomingContactAlertsInternal(context, contactConfigs)
+            contactSettings: Map<ContactEventType, ContactSettings>,
+        ): Sequence<Alert> = getUpcomingContactAlertsInternal(context, contactSettings)
     }
 }
 
@@ -71,10 +74,14 @@ private fun makeContactId(
 
 private fun getUpcomingCalendarAlertsInternal(
     context: Context,
-    configs: Map<Long, CalendarAlertConfig>,
+    calendarSettings: Map<Long, CalendarSettings>,
 ): Sequence<Alert> =
     sequence {
-        if (configs.isEmpty()) return@sequence
+        if (calendarSettings.isEmpty()) return@sequence
+        val enabledCalIds = calendarSettings.filterValues { it.enabled }.keys
+        if (enabledCalIds.isEmpty()) return@sequence
+        if (!context.hasPermission(Manifest.permission.READ_CALENDAR)) return@sequence
+
         val now = Instant.now()
         val searchStart = now.minus(1, ChronoUnit.DAYS)
         val end = now.plus(7, ChronoUnit.DAYS)
@@ -97,7 +104,7 @@ private fun getUpcomingCalendarAlertsInternal(
                 Instances.CALENDAR_ID,
             )
 
-        val calIds = configs.keys.joinToString(",")
+        val calIds = enabledCalIds.joinToString(",")
 
         context.contentResolver
             .query(
@@ -120,7 +127,8 @@ private fun getUpcomingCalendarAlertsInternal(
 
                 while (cursor.moveToNext()) {
                     val calId = cursor.getLong(calIdIdx)
-                    val config = configs[calId] ?: continue
+                    val config = calendarSettings[calId]
+                    if (config == null || !config.enabled) continue
 
                     val isAllDay = cursor.getInt(allDayIdx) != 0
 
@@ -145,7 +153,7 @@ private fun getUpcomingCalendarAlertsInternal(
                             )?.use { reminderCursor ->
                                 generateSequence {
                                     if (reminderCursor.moveToNext()) {
-                                        reminderCursor.getInt(0)
+                                        reminderCursor.getInt(0).minutes
                                     } else {
                                         null
                                     }
@@ -186,7 +194,7 @@ private fun getUpcomingCalendarAlertsInternal(
     }
 
 private fun createAllDayCalendarAlerts(
-    config: CalendarAlertConfig,
+    config: CalendarSettings,
     eventId: Long,
     calendarName: String,
     title: String,
@@ -195,7 +203,7 @@ private fun createAllDayCalendarAlerts(
     startDate: LocalDate,
     endDate: LocalDate,
     color: Int,
-    offsets: List<Int>,
+    offsets: List<Duration>,
 ): Sequence<Alert> =
     sequence {
         val startTime = startDate.atStartOfDay(ZoneId.systemDefault()).toInstant()
@@ -212,8 +220,8 @@ private fun createAllDayCalendarAlerts(
                         location = location,
                         startTime = startTime,
                         endTime = endTime,
-                        alertTime = startTime.minus(offset.toLong(), ChronoUnit.MINUTES),
-                        color = androidToPebbleColor(color),
+                        alertTime = startTime - offset.toJavaDuration(),
+                        color = PebbleColor.fromRgb(color),
                     ),
                 )
             }
@@ -240,12 +248,12 @@ private fun createAllDayCalendarAlerts(
                 }
             }
 
-        if (offsets.isEmpty() && config.timeDayBefore != null) {
+        if (offsets.isEmpty() && config.dayBefore) {
             days.firstOrNull()?.let { firstDay ->
                 val alertTime =
                     firstDay
                         .minusDays(1)
-                        .atTime(config.timeDayBefore)
+                        .atTime(config.dayBeforeTime)
                         .atZone(ZoneId.systemDefault())
                         .toInstant()
 
@@ -259,18 +267,18 @@ private fun createAllDayCalendarAlerts(
                         startTime = startTime,
                         endTime = endTime,
                         alertTime = alertTime,
-                        color = androidToPebbleColor(color),
+                        color = PebbleColor.fromRgb(color),
                     ),
                 )
             }
         }
 
-        if (config.timeOnDay != null) {
+        if (config.dayOf) {
             for (day in days) {
                 val alertTime =
                     day
                         .atTime(
-                            config.timeOnDay,
+                            config.dayOfTime,
                         ).atZone(ZoneId.systemDefault())
                         .toInstant()
                 yield(
@@ -283,7 +291,7 @@ private fun createAllDayCalendarAlerts(
                         startTime = startTime,
                         endTime = endTime,
                         alertTime = alertTime,
-                        color = androidToPebbleColor(color),
+                        color = PebbleColor.fromRgb(color),
                     ),
                 )
             }
@@ -291,7 +299,7 @@ private fun createAllDayCalendarAlerts(
     }
 
 private fun createTimedCalendarAlerts(
-    config: CalendarAlertConfig,
+    config: CalendarSettings,
     eventId: Long,
     calendarName: String,
     title: String,
@@ -300,10 +308,13 @@ private fun createTimedCalendarAlerts(
     startTime: Instant,
     endTime: Instant,
     color: Int,
-    offsets: List<Int>,
+    offsets: List<Duration>,
 ): Sequence<Alert> =
     sequence {
-        val finalOffsets = offsets.ifEmpty { listOfNotNull(config.defaultAlertOffsetMinutes) }
+        val finalOffsets =
+            offsets.ifEmpty {
+                listOfNotNull(if (config.notifyUnreminded) config.unremindedOffset else null)
+            }
 
         for (offset in finalOffsets) {
             yield(
@@ -315,8 +326,8 @@ private fun createTimedCalendarAlerts(
                     location = location,
                     startTime = startTime,
                     endTime = endTime,
-                    alertTime = startTime.minus(offset.toLong(), ChronoUnit.MINUTES),
-                    color = androidToPebbleColor(color),
+                    alertTime = startTime - offset.toJavaDuration(),
+                    color = PebbleColor.fromRgb(color),
                 ),
             )
         }
@@ -324,14 +335,14 @@ private fun createTimedCalendarAlerts(
 
 private fun getUpcomingContactAlertsInternal(
     context: Context,
-    contactConfigs: Map<ContactEventType, ContactAlertConfig>,
+    contactSettings: Map<ContactEventType, ContactSettings>,
 ): Sequence<Alert> =
     sequence {
-        val hasAnyConfig =
-            contactConfigs.values.any { it.timeOnDay != null || it.timeDayBefore != null }
-        if (!hasAnyConfig) {
+        if (contactSettings.isEmpty()) return@sequence
+        if (!contactSettings.values.any { it.dayOf || it.dayBefore }) {
             return@sequence
         }
+        if (!context.hasPermission(Manifest.permission.READ_CONTACTS)) return@sequence
 
         val uri = ContactsContract.Data.CONTENT_URI
         val projection =
@@ -386,10 +397,8 @@ private fun getUpcomingContactAlertsInternal(
                             else -> null
                         } ?: continue
 
-                    val config = contactConfigs[type]
-                    if (config == null ||
-                        (config.timeOnDay == null && config.timeDayBefore == null)
-                    ) {
+                    val config = contactSettings[type]
+                    if (config == null || (!config.dayOf && !config.dayBefore)) {
                         continue
                     }
 
@@ -409,7 +418,7 @@ private fun getUpcomingContactAlertsInternal(
     }
 
 private fun createFromContactInstance(
-    config: ContactAlertConfig,
+    config: ContactSettings,
     today: LocalDate,
     zone: ZoneId,
     contactId: Long,
@@ -516,6 +525,6 @@ private fun createFromContactInstance(
             )
         }
 
-        addAlertIfValid(config.timeDayBefore, true)
-        addAlertIfValid(config.timeOnDay, false)
+        addAlertIfValid(if (config.dayBefore) config.dayBeforeTime else null, true)
+        addAlertIfValid(if (config.dayOf) config.dayOfTime else null, false)
     }
