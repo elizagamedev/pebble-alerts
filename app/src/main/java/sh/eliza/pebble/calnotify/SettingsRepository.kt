@@ -26,6 +26,27 @@ private val DEFAULT_DAY_BEFORE_TIME = LocalTime.of(18, 0) // 6:00 PM
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
+private fun Preferences.readOptionalDuration(
+    key: String,
+    default: Duration?,
+): Duration? {
+    val rawVal = this[intPreferencesKey(key)]
+    return if (rawVal == null) {
+        default
+    } else if (rawVal == -1) {
+        null
+    } else {
+        rawVal.seconds
+    }
+}
+
+private fun MutablePreferences.writeOptionalDuration(
+    key: String,
+    value: Duration?,
+) {
+    this[intPreferencesKey(key)] = value?.inWholeSeconds?.toInt() ?: -1
+}
+
 enum class MultiDayAlertMode(
     val label: String,
 ) {
@@ -42,10 +63,10 @@ enum class ContactEventType(
 }
 
 data class GeneralSettings(
-    val syncInterval: Duration,
+    val syncInterval: Duration?,
 ) {
     fun updatePrefs(prefs: MutablePreferences) {
-        prefs[intPreferencesKey("general_sync_interval")] = syncInterval.inWholeSeconds.toInt()
+        prefs.writeOptionalDuration("general_sync_interval", syncInterval)
     }
 
     companion object {
@@ -57,8 +78,10 @@ data class GeneralSettings(
         fun createFromPrefs(prefs: Preferences): GeneralSettings =
             GeneralSettings(
                 syncInterval =
-                    prefs[intPreferencesKey("general_sync_interval")]?.seconds
-                        ?: DEFAULT.syncInterval,
+                    prefs.readOptionalDuration(
+                        "general_sync_interval",
+                        DEFAULT.syncInterval,
+                    ),
             )
     }
 }
@@ -71,8 +94,7 @@ data class AppSettings(
 
 data class CalendarSettings(
     val enabled: Boolean,
-    val notifyUnreminded: Boolean,
-    val unremindedOffset: Duration,
+    val unremindedOffset: Duration?,
     val dayOf: Boolean,
     val dayOfTime: LocalTime,
     val dayBefore: Boolean,
@@ -84,9 +106,7 @@ data class CalendarSettings(
         id: Long,
     ) {
         prefs[booleanPreferencesKey("calendar_${id}_enable")] = enabled
-        prefs[booleanPreferencesKey("calendar_${id}_notify_unreminded")] = notifyUnreminded
-        prefs[intPreferencesKey("calendar_${id}_unreminded_offset")] =
-            unremindedOffset.inWholeSeconds.toInt()
+        prefs.writeOptionalDuration("calendar_${id}_unreminded_offset", unremindedOffset)
         prefs[booleanPreferencesKey("calendar_${id}_day_of")] = dayOf
         prefs[intPreferencesKey("calendar_${id}_day_of_time")] = dayOfTime.toSecondOfDay()
         prefs[booleanPreferencesKey("calendar_${id}_day_before")] = dayBefore
@@ -98,8 +118,7 @@ data class CalendarSettings(
         val DEFAULT =
             CalendarSettings(
                 enabled = false,
-                notifyUnreminded = false,
-                unremindedOffset = 10.minutes,
+                unremindedOffset = null,
                 dayOf = false,
                 dayOfTime = DEFAULT_DAY_OF_TIME,
                 dayBefore = false,
@@ -121,14 +140,20 @@ data class CalendarSettings(
                     DEFAULT.multiDayMode
                 }
 
+            val notifyUnreminded = prefs[booleanPreferencesKey("calendar_${id}_notify_unreminded")]
+            val unremindedOffset =
+                if (notifyUnreminded == false) {
+                    null
+                } else {
+                    prefs.readOptionalDuration(
+                        "calendar_${id}_unreminded_offset",
+                        if (notifyUnreminded == true) 10.minutes else DEFAULT.unremindedOffset,
+                    )
+                }
+
             return CalendarSettings(
                 enabled = prefs[booleanPreferencesKey("calendar_${id}_enable")] ?: DEFAULT.enabled,
-                notifyUnreminded =
-                    prefs[booleanPreferencesKey("calendar_${id}_notify_unreminded")]
-                        ?: DEFAULT.notifyUnreminded,
-                unremindedOffset =
-                    prefs[intPreferencesKey("calendar_${id}_unreminded_offset")]?.seconds
-                        ?: DEFAULT.unremindedOffset,
+                unremindedOffset = unremindedOffset,
                 dayOf = prefs[booleanPreferencesKey("calendar_${id}_day_of")] ?: DEFAULT.dayOf,
                 dayOfTime =
                     prefs[intPreferencesKey("calendar_${id}_day_of_time")]?.let {

@@ -33,7 +33,10 @@ class PebbleManager(
         val dict =
             mapOf<UInt, PebbleDictionaryItem>(
                 0u to PebbleDictionaryItem.UInt32(MSG_POST_SETTINGS),
-                1u to PebbleDictionaryItem.UInt32(settings.syncInterval.inWholeSeconds.toUInt()),
+                1u to
+                    PebbleDictionaryItem.Int32(
+                        settings.syncInterval?.inWholeSeconds?.toInt() ?: -1,
+                    ),
             )
         sender.sendDataToPebble(APP_UUID, dict)
     }

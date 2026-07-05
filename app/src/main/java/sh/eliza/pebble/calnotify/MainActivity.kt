@@ -45,8 +45,9 @@ class MainActivity : ComponentActivity() {
                         old.contactSettings == new.contactSettings
                 }.collectLatest { settings ->
                     val alerts = Alert.getUpcomingAlerts(this@MainActivity, settings)
-                    pebbleManager.openAppOnWatch()
-                    pebbleManager.postAlerts(alerts)
+                    if (pebbleManager.openAppOnWatch()) {
+                        pebbleManager.postAlerts(alerts)
+                    }
                 }
         }
 
@@ -57,8 +58,9 @@ class MainActivity : ComponentActivity() {
                 .map { it.generalSettings }
                 .drop(1) // Skip the initial emission on app launch
                 .collectLatest { settings ->
-                    pebbleManager.openAppOnWatch()
-                    pebbleManager.postSettings(settings)
+                    if (pebbleManager.openAppOnWatch()) {
+                        pebbleManager.postSettings(settings)
+                    }
                 }
         }
 

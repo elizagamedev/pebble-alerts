@@ -11,6 +11,14 @@ import android.net.Uri
 import android.provider.CalendarContract
 import android.provider.Settings
 import android.text.format.DateFormat
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -19,9 +27,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -37,8 +48,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -46,12 +59,12 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -78,9 +91,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import sh.eliza.pebble.calnotify.PebbleColor.Companion.PEBBLE_COLORS
 import java.net.URLEncoder
@@ -92,9 +102,10 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 
-fun formatDuration(duration: Duration): String {
+fun formatDuration(duration: Duration?): String {
+    if (duration == null) return "Off"
     val minutes = duration.inWholeMinutes.toInt()
-    if (minutes == 0) return "At time of event"
+    if (minutes == 0) return "When event starts"
     val fmt = MeasureFormat.getInstance(Locale.getDefault(), MeasureFormat.FormatWidth.WIDE)
     return if (minutes < 60) {
         fmt.format(Measure(minutes, MeasureUnit.MINUTE))
@@ -161,8 +172,12 @@ fun getDeviceCalendars(context: Context): List<CalendarInfo> {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(repository: SettingsRepository) {
+    val initialSettings = remember(repository) { repository.appSettingsFlow.value }
+    val appSettings by repository.appSettingsFlow.collectAsState(initial = initialSettings)
+    val currentSettings = appSettings ?: return
+
     val context = LocalContext.current
-    val openSettings = {
+    val openPermissionSettings = {
         val intent =
             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                 data = Uri.fromParts("package", context.packageName, null)
@@ -172,11 +187,47 @@ fun SettingsScreen(repository: SettingsRepository) {
 
     val navController = rememberNavController()
 
-    NavHost(navController = navController, startDestination = "home") {
+    NavHost(
+        navController = navController,
+        startDestination = "home",
+        enterTransition = {
+            slideInHorizontally(
+                initialOffsetX = { it },
+                animationSpec = tween(300, easing = FastOutSlowInEasing)
+            )
+        },
+        exitTransition = {
+            slideOutHorizontally(
+                targetOffsetX = { -it / 5 },
+                animationSpec = tween(300, easing = FastOutSlowInEasing)
+            ) + fadeOut(animationSpec = tween(300, easing = FastOutSlowInEasing)) +
+            scaleOut(
+                targetScale = 0.95f,
+                animationSpec = tween(300, easing = FastOutSlowInEasing)
+            )
+        },
+        popEnterTransition = {
+            slideInHorizontally(
+                initialOffsetX = { -it / 5 },
+                animationSpec = tween(300, easing = FastOutSlowInEasing)
+            ) + fadeIn(animationSpec = tween(300, easing = FastOutSlowInEasing)) +
+            scaleIn(
+                initialScale = 0.95f,
+                animationSpec = tween(300, easing = FastOutSlowInEasing)
+            )
+        },
+        popExitTransition = {
+            slideOutHorizontally(
+                targetOffsetX = { it },
+                animationSpec = tween(300, easing = FastOutSlowInEasing)
+            )
+        },
+    ) {
         composable("home") {
             HomeScreen(
+                settings = currentSettings,
                 repository = repository,
-                openSettings = openSettings,
+                openPermissionSettings = openPermissionSettings,
                 onNavigate = { navController.navigate(it) },
             )
         }
@@ -196,6 +247,7 @@ fun SettingsScreen(repository: SettingsRepository) {
                 id = id,
                 name = name,
                 accountName = accountName,
+                settings = currentSettings.calendarSettings[id] ?: CalendarSettings.DEFAULT,
                 repository = repository,
                 onNavigateUp = { navController.navigateUp() },
             )
@@ -211,6 +263,7 @@ fun SettingsScreen(repository: SettingsRepository) {
             ContactSettingsScreen(
                 title = eventType.label,
                 eventType = eventType,
+                settings = currentSettings.contactSettings[eventType] ?: ContactSettings.DEFAULT,
                 repository = repository,
                 onNavigateUp = { navController.navigateUp() },
             )
@@ -221,8 +274,9 @@ fun SettingsScreen(repository: SettingsRepository) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
+    settings: AppSettings,
     repository: SettingsRepository,
-    openSettings: () -> Unit,
+    openPermissionSettings: () -> Unit,
     onNavigate: (String) -> Unit,
 ) {
     val context = LocalContext.current
@@ -236,15 +290,7 @@ fun HomeScreen(
     }
     var calendars by remember { mutableStateOf(getDeviceCalendars(context)) }
 
-    val generalSettingsFlow =
-        remember(repository) {
-            repository.appSettingsFlow
-                .filterNotNull()
-                .map { it.generalSettings }
-                .distinctUntilChanged()
-        }
-    val generalSettings by generalSettingsFlow.collectAsState(initial = GeneralSettings.DEFAULT)
-    val syncInterval = generalSettings.syncInterval
+    val syncInterval = settings.generalSettings.syncInterval
     var showSyncIntervalDialog by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
@@ -282,102 +328,101 @@ fun HomeScreen(
                 )
             }
 
-            PreferenceCategory(title = "Permissions")
-            SettingsGroup {
-                PermissionSwitchPreference(
-                    title = "Calendar",
-                    permission = Manifest.permission.READ_CALENDAR,
-                    openSettings = openSettings,
-                )
-                PermissionSwitchPreference(
-                    title = "Contacts",
-                    permission = Manifest.permission.READ_CONTACTS,
-                    openSettings = openSettings,
-                )
-            }
-
-            PreferenceCategory(title = "Calendars")
-            SettingsGroup {
-                if (!hasCalendarPermission) {
-                    ListItem(
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        headlineContent = {
-                            Text(
-                                "Please grant calendar permission to view or edit settings.",
-                                color = Color.Gray,
-                            )
-                        },
-                    )
-                } else if (calendars.isEmpty()) {
-                    ListItem(
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        headlineContent = { Text("No calendars found.", color = Color.Gray) },
-                    )
-                } else {
-                    calendars.forEach { calendar ->
-                        ListItem(
-                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                            headlineContent = { Text(calendar.name) },
-                            supportingContent = { Text(calendar.accountName) },
-                            modifier =
-                                Modifier.clickable {
-                                    onNavigate(
-                                        "calendar/${calendar.id}?name=${URLEncoder.encode(
-                                            calendar.name,
-                                            StandardCharsets.UTF_8.name(),
-                                        ).replace("+", "%20")}&accountName=${URLEncoder.encode(
-                                            calendar.accountName,
-                                            StandardCharsets.UTF_8.name(),
-                                        ).replace("+", "%20")}",
-                                    )
-                                },
+            if (!hasCalendarPermission || !hasContactsPermission) {
+                PreferenceCategory(title = "Permissions")
+                SettingsGroup {
+                    if (!hasCalendarPermission) {
+                        PermissionSwitchPreference(
+                            title = "Calendar",
+                            permission = Manifest.permission.READ_CALENDAR,
+                            openPermissionSettings = openPermissionSettings,
+                        )
+                    }
+                    if (!hasCalendarPermission && !hasContactsPermission) {
+                        SettingsGroupDivider()
+                    }
+                    if (!hasContactsPermission) {
+                        PermissionSwitchPreference(
+                            title = "Contacts",
+                            permission = Manifest.permission.READ_CONTACTS,
+                            openPermissionSettings = openPermissionSettings,
                         )
                     }
                 }
             }
 
+            PreferenceCategory(title = "Calendars")
+            if (!hasCalendarPermission) {
+                SettingsGroup {
+                    PermissionPlaceholder(
+                        "Please grant calendar permission to view or edit settings.",
+                    )
+                }
+            } else if (calendars.isEmpty()) {
+                SettingsGroup { PermissionPlaceholder("No calendars found.") }
+            } else {
+                SettingsGroup {
+                    calendars.forEachIndexed { index, calendar ->
+                        val calendarSettings =
+                            settings.calendarSettings[calendar.id] ?: CalendarSettings.DEFAULT
+                        CalendarListItem(
+                            name = calendar.name,
+                            accountName = calendar.accountName,
+                            enabled = calendarSettings.enabled,
+                            onToggle = { checked ->
+                                coroutineScope.launch {
+                                    repository.updateCalendarSettings(
+                                        calendar.id,
+                                    ) { it.copy(enabled = checked) }
+                                }
+                            },
+                            onClick = {
+                                onNavigate(
+                                    "calendar/${calendar.id}" +
+                                        "?name=${URLEncoder.encode(
+                                            calendar.name,
+                                            StandardCharsets.UTF_8.name(),
+                                        ).replace("+", "%20")}" +
+                                        "&accountName=${URLEncoder.encode(
+                                            calendar.accountName,
+                                            StandardCharsets.UTF_8.name(),
+                                        ).replace("+", "%20")}",
+                                )
+                            },
+                        )
+                        if (index < calendars.size - 1) SettingsGroupDivider()
+                    }
+                }
+            }
+
             PreferenceCategory(title = "Events")
-            SettingsGroup {
-                if (!hasContactsPermission) {
-                    ListItem(
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        headlineContent = {
-                            Text(
-                                "Please grant contacts permission to view or edit settings.",
-                                color = Color.Gray,
-                            )
-                        },
+            if (!hasContactsPermission) {
+                SettingsGroup {
+                    PermissionPlaceholder(
+                        "Please grant contacts permission to view or edit settings.",
                     )
-                } else {
-                    ListItem(
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        headlineContent = { Text(ContactEventType.BIRTHDAY.label) },
-                        modifier =
-                            Modifier.clickable {
-                                onNavigate(
-                                    "contacts/${ContactEventType.BIRTHDAY.name}",
-                                )
-                            },
+                }
+            } else {
+                SettingsGroup {
+                    NavigableListItem(
+                        title = ContactEventType.BIRTHDAY.label,
+                        onClick = { onNavigate("contacts/${ContactEventType.BIRTHDAY.name}") },
                     )
-                    ListItem(
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        headlineContent = { Text(ContactEventType.ANNIVERSARY.label) },
-                        modifier =
-                            Modifier.clickable {
-                                onNavigate(
-                                    "contacts/${ContactEventType.ANNIVERSARY.name}",
-                                )
-                            },
+                    SettingsGroupDivider()
+                    NavigableListItem(
+                        title = ContactEventType.ANNIVERSARY.label,
+                        onClick = { onNavigate("contacts/${ContactEventType.ANNIVERSARY.name}") },
                     )
                 }
             }
         }
 
         if (showSyncIntervalDialog) {
-            DurationPickerDialog(
+            RadioGroupDialog(
                 title = "Sync interval",
                 options =
                     listOf(
+                        null,
                         15.minutes,
                         30.minutes,
                         1.hours,
@@ -386,14 +431,14 @@ fun HomeScreen(
                         12.hours,
                         24.hours,
                     ),
-                currentDuration = syncInterval,
-                onDismiss = { showSyncIntervalDialog = false },
-                onConfirm = { duration ->
+                selectedOption = syncInterval,
+                onOptionSelected = { duration ->
                     coroutineScope.launch {
                         repository.updateGeneralSettings { it.copy(syncInterval = duration) }
                     }
-                    showSyncIntervalDialog = false
                 },
+                onDismiss = { showSyncIntervalDialog = false },
+                optionLabel = { formatDuration(it) },
             )
         }
     }
@@ -405,6 +450,7 @@ fun CalendarDetailScreen(
     id: Long,
     name: String,
     accountName: String,
+    settings: CalendarSettings,
     repository: SettingsRepository,
     onNavigateUp: () -> Unit,
 ) {
@@ -431,7 +477,12 @@ fun CalendarDetailScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(bottom = 24.dp),
         ) {
-            CalendarSettingsGroup(id = id, enabled = true, repository = repository)
+            CalendarSettingsGroup(
+                id = id,
+                enabled = true,
+                settings = settings,
+                repository = repository,
+            )
         }
     }
 }
@@ -441,6 +492,7 @@ fun CalendarDetailScreen(
 fun ContactSettingsScreen(
     title: String,
     eventType: ContactEventType,
+    settings: ContactSettings,
     repository: SettingsRepository,
     onNavigateUp: () -> Unit,
 ) {
@@ -468,8 +520,9 @@ fun ContactSettingsScreen(
                     .padding(bottom = 24.dp),
         ) {
             ContactsSettingsGroup(
-                repository = repository,
                 eventType = eventType,
+                settings = settings,
+                repository = repository,
             )
         }
     }
@@ -477,18 +530,10 @@ fun ContactSettingsScreen(
 
 @Composable
 fun ContactsSettingsGroup(
-    repository: SettingsRepository,
     eventType: ContactEventType,
+    settings: ContactSettings,
+    repository: SettingsRepository,
 ) {
-    val flow =
-        remember(repository, eventType) {
-            repository.appSettingsFlow
-                .filterNotNull()
-                .map { it.contactSettings[eventType] ?: ContactSettings.DEFAULT }
-                .distinctUntilChanged()
-        }
-    val settings by flow.collectAsState(initial = ContactSettings.DEFAULT)
-
     val scope = rememberCoroutineScope()
 
     fun updateSettings(transform: (ContactSettings) -> ContactSettings) {
@@ -502,36 +547,12 @@ fun ContactsSettingsGroup(
             checked = settings.timelinePins,
             onCheckedChange = { checked -> updateSettings { it.copy(timelinePins = checked) } },
         )
-
-        var showColorDialog by remember { mutableStateOf(false) }
-
-        ListItem(
-            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-            headlineContent = { Text("Accent color") },
-            trailingContent = {
-                Box(
-                    modifier = Modifier.size(48.dp),
-                    contentAlignment = androidx.compose.ui.Alignment.Center,
-                ) {
-                    Box(
-                        modifier =
-                            Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .background(settings.color.toAndroidColorCorrected()),
-                    )
-                }
-            },
-            modifier = Modifier.clickable { showColorDialog = true },
+        SettingsGroupDivider()
+        ColorPreference(
+            title = "Accent color",
+            color = settings.color,
+            onColorSelected = { color -> updateSettings { it.copy(color = color) } },
         )
-
-        if (showColorDialog) {
-            ColorPickerDialog(
-                selectedColor = settings.color,
-                onColorSelected = { colorArgb -> updateSettings { it.copy(color = colorArgb) } },
-                onDismiss = { showColorDialog = false },
-            )
-        }
     }
 
     DayAlertSettingsGroup(
@@ -573,7 +594,7 @@ fun DayAlertSettingsGroup(
             enabled = isGroupEnabled,
             onCheckedChange = onCheckedChange,
         )
-
+        SettingsGroupDivider()
         var showTimeDialog by remember { mutableStateOf(false) }
         val context = LocalContext.current
         DependentValuePreference(
@@ -582,7 +603,6 @@ fun DayAlertSettingsGroup(
             enabled = isGroupEnabled && checked,
             onClick = { showTimeDialog = true },
         )
-
         if (showTimeDialog) {
             TimePickerDialog(
                 initialTime = time,
@@ -598,13 +618,24 @@ fun DayAlertSettingsGroup(
 
 @Composable
 fun SettingsGroup(content: @Composable () -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
     ) {
-        Column(modifier = Modifier.padding(vertical = 8.dp)) { content() }
+        content()
     }
+}
+
+@Composable
+fun SettingsGroupDivider() {
+    HorizontalDivider(
+        color = MaterialTheme.colorScheme.background,
+        thickness = 2.dp,
+    )
 }
 
 @Composable
@@ -638,7 +669,10 @@ fun SwitchPreference(
                 onCheckedChange = onCheckedChange,
             )
         },
-        modifier = Modifier.clickable(enabled = enabled) { onCheckedChange(!checked) },
+        modifier =
+            Modifier.defaultMinSize(minHeight = 72.dp).clickable(enabled = enabled) {
+                onCheckedChange(!checked)
+            },
     )
 }
 
@@ -664,49 +698,59 @@ fun DependentValuePreference(
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha),
             )
         },
-        modifier = Modifier.clickable(enabled = enabled, onClick = onClick),
+        modifier =
+            Modifier
+                .defaultMinSize(minHeight = 72.dp)
+                .clickable(enabled = enabled, onClick = onClick),
     )
 }
 
 @Composable
-fun DurationPickerDialog(
+fun <T> RadioGroupDialog(
     title: String,
-    options: List<Duration>,
-    currentDuration: Duration,
+    options: List<T>,
+    selectedOption: T,
+    onOptionSelected: (T) -> Unit,
     onDismiss: () -> Unit,
-    onConfirm: (Duration) -> Unit,
+    optionLabel: (T) -> String,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
+        title = { Text(title, style = MaterialTheme.typography.titleLarge) },
         text = {
-            Column(modifier = Modifier.selectableGroup()) {
-                options.forEach { duration ->
+            Column(
+                modifier = Modifier.selectableGroup().verticalScroll(rememberScrollState()),
+            ) {
+                options.forEach { option ->
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .height(56.dp)
+                            .height(48.dp)
                             .selectable(
-                                selected = (duration == currentDuration),
-                                onClick = { onConfirm(duration) },
+                                selected = (option == selectedOption),
+                                onClick = {
+                                    onOptionSelected(option)
+                                    onDismiss()
+                                },
                                 role = Role.RadioButton,
-                            ).padding(horizontal = 16.dp),
+                            ).padding(horizontal = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(
-                            selected = (duration == currentDuration),
+                            selected = (option == selectedOption),
                             onClick = null,
                         )
                         Spacer(modifier = Modifier.width(16.dp))
                         Text(
-                            text = formatDuration(duration),
+                            text = optionLabel(option),
                             style = MaterialTheme.typography.bodyLarge,
                         )
                     }
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -748,17 +792,9 @@ fun TimePickerDialog(
 fun CalendarSettingsGroup(
     id: Long,
     enabled: Boolean,
+    settings: CalendarSettings,
     repository: SettingsRepository,
 ) {
-    val flow =
-        remember(repository, id) {
-            repository.appSettingsFlow
-                .filterNotNull()
-                .map { it.calendarSettings[id] ?: CalendarSettings.DEFAULT }
-                .distinctUntilChanged()
-        }
-    val settings by flow.collectAsState(initial = CalendarSettings.DEFAULT)
-
     val scope = rememberCoroutineScope()
 
     fun updateSettings(transform: (CalendarSettings) -> CalendarSettings) {
@@ -776,28 +812,21 @@ fun CalendarSettingsGroup(
         )
     }
 
-    PreferenceCategory(title = "Events without reminders")
+    PreferenceCategory(title = "Timed events")
     SettingsGroup {
-        SwitchPreference(
-            title = "Alert for un-reminded events",
-            checked = settings.notifyUnreminded,
-            enabled = isGroupEnabled,
-            onCheckedChange = { checked -> updateSettings { it.copy(notifyUnreminded = checked) } },
-        )
-
         var showDurationDialog by remember { mutableStateOf(false) }
         DependentValuePreference(
-            title = "Alert time before event",
+            title = "Default reminder time",
             subtitle = formatDuration(settings.unremindedOffset),
-            enabled = isGroupEnabled && settings.notifyUnreminded,
+            enabled = isGroupEnabled,
             onClick = { showDurationDialog = true },
         )
-
         if (showDurationDialog) {
-            DurationPickerDialog(
-                title = "Alert time before event",
+            RadioGroupDialog(
+                title = "Default reminder time",
                 options =
                     listOf(
+                        null,
                         0.minutes,
                         5.minutes,
                         10.minutes,
@@ -809,12 +838,12 @@ fun CalendarSettingsGroup(
                         12.hours,
                         24.hours,
                     ),
-                currentDuration = settings.unremindedOffset,
-                onDismiss = { showDurationDialog = false },
-                onConfirm = { duration ->
+                selectedOption = settings.unremindedOffset,
+                onOptionSelected = { duration ->
                     updateSettings { it.copy(unremindedOffset = duration) }
-                    showDurationDialog = false
                 },
+                onDismiss = { showDurationDialog = false },
+                optionLabel = { formatDuration(it) },
             )
         }
     }
@@ -842,47 +871,20 @@ fun CalendarSettingsGroup(
     PreferenceCategory(title = "Multi-day events")
     SettingsGroup {
         var showMultiDayDialog by remember { mutableStateOf(false) }
-
         DependentValuePreference(
-            title = "Alert frequency",
+            title = "Alerts for multi-day events",
             subtitle = settings.multiDayMode.label,
-            enabled = isGroupEnabled && (settings.dayOf || settings.dayBefore),
+            enabled = isGroupEnabled,
             onClick = { showMultiDayDialog = true },
         )
-
         if (showMultiDayDialog) {
-            AlertDialog(
-                onDismissRequest = { showMultiDayDialog = false },
-                title = { Text("Multi-day alert mode") },
-                text = {
-                    Column {
-                        MultiDayAlertMode.values().forEach { mode ->
-                            Row(
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            updateSettings { it.copy(multiDayMode = mode) }
-                                            showMultiDayDialog = false
-                                        }.padding(vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                RadioButton(
-                                    selected = mode == settings.multiDayMode,
-                                    onClick = {
-                                        updateSettings { it.copy(multiDayMode = mode) }
-                                        showMultiDayDialog = false
-                                    },
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(mode.label)
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { showMultiDayDialog = false }) { Text("Cancel") }
-                },
+            RadioGroupDialog(
+                title = "Alerts for multi-day events",
+                options = MultiDayAlertMode.values().toList(),
+                selectedOption = settings.multiDayMode,
+                onOptionSelected = { mode -> updateSettings { it.copy(multiDayMode = mode) } },
+                onDismiss = { showMultiDayDialog = false },
+                optionLabel = { it.label },
             )
         }
     }
@@ -892,7 +894,7 @@ fun CalendarSettingsGroup(
 fun PermissionSwitchPreference(
     title: String,
     permission: String,
-    openSettings: () -> Unit,
+    openPermissionSettings: () -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -918,7 +920,7 @@ fun PermissionSwitchPreference(
             if (!isGranted) {
                 val activity = context as Activity
                 if (!ActivityCompat.shouldShowRequestPermissionRationale(activity, permission)) {
-                    openSettings()
+                    openPermissionSettings()
                 }
             }
         }
@@ -930,7 +932,7 @@ fun PermissionSwitchPreference(
             if (checked) {
                 launcher.launch(permission)
             } else {
-                openSettings()
+                openPermissionSettings()
             }
         },
     )
@@ -977,6 +979,116 @@ fun ColorPickerDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+@Composable
+fun CalendarListItem(
+    name: String,
+    accountName: String,
+    enabled: Boolean,
+    onToggle: (Boolean) -> Unit,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min)
+                .defaultMinSize(minHeight = 72.dp)
+                .clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 16.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(
+                    text = accountName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp),
+            )
+        }
+        VerticalDivider(
+            modifier = Modifier.padding(vertical = 8.dp).height(56.dp),
+        )
+        Switch(
+            checked = enabled,
+            onCheckedChange = onToggle,
+            modifier = Modifier.padding(horizontal = 12.dp),
+        )
+    }
+}
+
+@Composable
+fun NavigableListItem(
+    title: String,
+    onClick: () -> Unit,
+) {
+    ListItem(
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        headlineContent = { Text(title) },
+        modifier = Modifier.defaultMinSize(minHeight = 72.dp).clickable(onClick = onClick),
+    )
+}
+
+@Composable
+fun ColorPreference(
+    title: String,
+    color: PebbleColor,
+    onColorSelected: (PebbleColor) -> Unit,
+) {
+    var showColorDialog by remember { mutableStateOf(false) }
+    ListItem(
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        headlineContent = { Text(title) },
+        trailingContent = {
+            Box(
+                modifier = Modifier.size(48.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier =
+                        Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(color.toAndroidColorCorrected()),
+                )
+            }
+        },
+        modifier = Modifier.defaultMinSize(minHeight = 72.dp).clickable { showColorDialog = true },
+    )
+    if (showColorDialog) {
+        ColorPickerDialog(
+            selectedColor = color,
+            onColorSelected = { selected ->
+                onColorSelected(selected)
+                showColorDialog = false
+            },
+            onDismiss = { showColorDialog = false },
+        )
+    }
+}
+
+@Composable
+fun PermissionPlaceholder(text: String) {
+    ListItem(
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        headlineContent = { Text(text, color = Color.Gray) },
+        modifier = Modifier.defaultMinSize(minHeight = 72.dp),
     )
 }
