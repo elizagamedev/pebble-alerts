@@ -5,10 +5,9 @@ import io.rebble.pebblekit2.client.DefaultPebbleSender
 import io.rebble.pebblekit2.client.PebbleSender
 import io.rebble.pebblekit2.common.model.PebbleDictionaryItem
 import io.rebble.pebblekit2.common.model.TransmissionResult
+import io.rebble.pebblekit2.common.model.WatchIdentifier
 import java.time.Instant
 import java.util.UUID
-
-private val APP_UUID = UUID.fromString("075a861e-c60b-4bb6-b3f2-b592925e86b1")
 
 private const val MSG_POST_SETTINGS = 0u
 private const val MSG_POST_ALERTS = 1u
@@ -24,12 +23,15 @@ class PebbleManager(
         sender.close()
     }
 
-    suspend fun openAppOnWatch(): Boolean {
-        val result = sender.startAppOnTheWatch(APP_UUID)
+    suspend fun openAppOnWatch(watch: WatchIdentifier? = null): Boolean {
+        val result = sender.startAppOnTheWatch(APP_UUID, watch?.let { listOf(it) })
         return result?.values?.any { it == TransmissionResult.Success } == true
     }
 
-    suspend fun postSettings(settings: GeneralSettings) {
+    suspend fun postSettings(
+        settings: GeneralSettings,
+        watch: WatchIdentifier? = null,
+    ) {
         val dict =
             mapOf<UInt, PebbleDictionaryItem>(
                 0u to PebbleDictionaryItem.UInt32(MSG_POST_SETTINGS),
@@ -38,10 +40,13 @@ class PebbleManager(
                         settings.syncInterval?.inWholeSeconds?.toInt() ?: -1,
                     ),
             )
-        sender.sendDataToPebble(APP_UUID, dict)
+        sender.sendDataToPebble(APP_UUID, dict, watch?.let { listOf(it) })
     }
 
-    suspend fun postAlerts(alerts: Sequence<Alert>) {
+    suspend fun postAlerts(
+        alerts: Sequence<Alert>,
+        watch: WatchIdentifier? = null,
+    ) {
         val now = Instant.now()
         val filteredAlerts = alerts.filter { it.startTime >= now }.take(MAX_ALERTS).toList()
 
@@ -64,6 +69,10 @@ class PebbleManager(
             dict[base + 7u] = PebbleDictionaryItem.UInt32(alert.alertTime.epochSecond.toUInt())
             dict[base + 8u] = PebbleDictionaryItem.UInt8(alert.color.toUByte())
         }
-        sender.sendDataToPebble(APP_UUID, dict)
+        sender.sendDataToPebble(APP_UUID, dict, watch?.let { listOf(it) })
+    }
+
+    companion object {
+        val APP_UUID = UUID.fromString("075a861e-c60b-4bb6-b3f2-b592925e86b1")
     }
 }

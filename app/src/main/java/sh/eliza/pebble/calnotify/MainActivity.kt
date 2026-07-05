@@ -24,11 +24,12 @@ fun Context.hasPermission(permission: String): Boolean =
     ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
 
 class MainActivity : ComponentActivity() {
-    private val pebbleManager = PebbleManager(this)
+    private lateinit var pebbleManager: PebbleManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
+        pebbleManager = PebbleManager(applicationContext)
 
         // Use SettingsRepository to fetch actual real-time settings
         val settingsRepository = SettingsRepository(dataStore, lifecycleScope)
