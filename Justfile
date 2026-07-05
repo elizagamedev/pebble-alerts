@@ -1,5 +1,5 @@
 emulator := "emery"
-phone := "192.168.0.205"
+phone := "192.168.0.117"
 zig_opts := "-Dpebble_sdk_path=" + justfile_directory() + "/.pebble-data/pebble-sdk/SDKs/current"
 
 # Build both pebble and android apps
@@ -28,6 +28,10 @@ build-android:
 install-android:
     ./gradlew installDebug
     adb shell am start -n sh.eliza.pebble.calnotify/.MainActivity
+
+# View pebble logs
+logs-pebble:
+    pebble logs --phone {{phone}}
 
 # Format all Kotlin sources
 format:

@@ -20,7 +20,10 @@ class PebbleManager(
     private val sender: PebbleSender = DefaultPebbleSender(context)
 
     override fun close() {
-        sender.close()
+        // No-op: The underlying service connection is bound to the applicationContext
+        // and persists for the lifetime of the application process. We let the OS reclaim
+        // the connection on process termination to avoid double-unbinding crashes
+        // caused by the SDK's internal unbind lifecycle (e.g., onBindingDied).
     }
 
     suspend fun openAppOnWatch(watch: WatchIdentifier? = null): Boolean {
