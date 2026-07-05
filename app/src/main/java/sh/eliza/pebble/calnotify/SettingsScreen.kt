@@ -11,6 +11,8 @@ import android.net.Uri
 import android.provider.CalendarContract
 import android.provider.Settings
 import android.text.format.DateFormat
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -19,8 +21,6 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -102,10 +102,13 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 
-fun formatDuration(duration: Duration?): String {
-    if (duration == null) return "Off"
+fun formatDuration(
+    context: Context,
+    duration: Duration?,
+): String {
+    if (duration == null) return context.getString(R.string.duration_off)
     val minutes = duration.inWholeMinutes.toInt()
-    if (minutes == 0) return "When event starts"
+    if (minutes == 0) return context.getString(R.string.duration_when_event_starts)
     val fmt = MeasureFormat.getInstance(Locale.getDefault(), MeasureFormat.FormatWidth.WIDE)
     return if (minutes < 60) {
         fmt.format(Measure(minutes, MeasureUnit.MINUTE))
@@ -193,33 +196,35 @@ fun SettingsScreen(repository: SettingsRepository) {
         enterTransition = {
             slideInHorizontally(
                 initialOffsetX = { it },
-                animationSpec = tween(300, easing = FastOutSlowInEasing)
+                animationSpec = tween(300, easing = FastOutSlowInEasing),
             )
         },
         exitTransition = {
             slideOutHorizontally(
                 targetOffsetX = { -it / 5 },
-                animationSpec = tween(300, easing = FastOutSlowInEasing)
-            ) + fadeOut(animationSpec = tween(300, easing = FastOutSlowInEasing)) +
-            scaleOut(
-                targetScale = 0.95f,
-                animationSpec = tween(300, easing = FastOutSlowInEasing)
-            )
+                animationSpec = tween(300, easing = FastOutSlowInEasing),
+            ) +
+                fadeOut(animationSpec = tween(300, easing = FastOutSlowInEasing)) +
+                scaleOut(
+                    targetScale = 0.95f,
+                    animationSpec = tween(300, easing = FastOutSlowInEasing),
+                )
         },
         popEnterTransition = {
             slideInHorizontally(
                 initialOffsetX = { -it / 5 },
-                animationSpec = tween(300, easing = FastOutSlowInEasing)
-            ) + fadeIn(animationSpec = tween(300, easing = FastOutSlowInEasing)) +
-            scaleIn(
-                initialScale = 0.95f,
-                animationSpec = tween(300, easing = FastOutSlowInEasing)
-            )
+                animationSpec = tween(300, easing = FastOutSlowInEasing),
+            ) +
+                fadeIn(animationSpec = tween(300, easing = FastOutSlowInEasing)) +
+                scaleIn(
+                    initialScale = 0.95f,
+                    animationSpec = tween(300, easing = FastOutSlowInEasing),
+                )
         },
         popExitTransition = {
             slideOutHorizontally(
                 targetOffsetX = { it },
-                animationSpec = tween(300, easing = FastOutSlowInEasing)
+                animationSpec = tween(300, easing = FastOutSlowInEasing),
             )
         },
     ) {
@@ -261,7 +266,7 @@ fun SettingsScreen(repository: SettingsRepository) {
                 runCatching { ContactEventType.valueOf(id) }.getOrDefault(ContactEventType.BIRTHDAY)
 
             ContactSettingsScreen(
-                title = eventType.label,
+                title = stringResource(eventType.labelResId),
                 eventType = eventType,
                 settings = currentSettings.contactSettings[eventType] ?: ContactSettings.DEFAULT,
                 repository = repository,
@@ -318,22 +323,22 @@ fun HomeScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(bottom = 24.dp),
         ) {
-            PreferenceCategory(title = "General")
+            PreferenceCategory(title = stringResource(R.string.category_general))
             SettingsGroup {
                 DependentValuePreference(
-                    title = "Sync interval",
-                    subtitle = formatDuration(syncInterval),
+                    title = stringResource(R.string.pref_sync_interval),
+                    subtitle = formatDuration(context, syncInterval),
                     enabled = true,
                     onClick = { showSyncIntervalDialog = true },
                 )
             }
 
             if (!hasCalendarPermission || !hasContactsPermission) {
-                PreferenceCategory(title = "Permissions")
+                PreferenceCategory(title = stringResource(R.string.category_permissions))
                 SettingsGroup {
                     if (!hasCalendarPermission) {
                         PermissionSwitchPreference(
-                            title = "Calendar",
+                            title = stringResource(R.string.permission_calendar),
                             permission = Manifest.permission.READ_CALENDAR,
                             openPermissionSettings = openPermissionSettings,
                         )
@@ -343,7 +348,7 @@ fun HomeScreen(
                     }
                     if (!hasContactsPermission) {
                         PermissionSwitchPreference(
-                            title = "Contacts",
+                            title = stringResource(R.string.permission_contacts),
                             permission = Manifest.permission.READ_CONTACTS,
                             openPermissionSettings = openPermissionSettings,
                         )
@@ -351,15 +356,15 @@ fun HomeScreen(
                 }
             }
 
-            PreferenceCategory(title = "Calendars")
+            PreferenceCategory(title = stringResource(R.string.category_calendars))
             if (!hasCalendarPermission) {
                 SettingsGroup {
                     PermissionPlaceholder(
-                        "Please grant calendar permission to view or edit settings.",
+                        stringResource(R.string.permission_calendar_placeholder),
                     )
                 }
             } else if (calendars.isEmpty()) {
-                SettingsGroup { PermissionPlaceholder("No calendars found.") }
+                SettingsGroup { PermissionPlaceholder(stringResource(R.string.no_calendars_found)) }
             } else {
                 SettingsGroup {
                     calendars.forEachIndexed { index, calendar ->
@@ -373,7 +378,9 @@ fun HomeScreen(
                                 coroutineScope.launch {
                                     repository.updateCalendarSettings(
                                         calendar.id,
-                                    ) { it.copy(enabled = checked) }
+                                    ) {
+                                        it.copy(enabled = checked)
+                                    }
                                 }
                             },
                             onClick = {
@@ -395,22 +402,22 @@ fun HomeScreen(
                 }
             }
 
-            PreferenceCategory(title = "Events")
+            PreferenceCategory(title = stringResource(R.string.category_events))
             if (!hasContactsPermission) {
                 SettingsGroup {
                     PermissionPlaceholder(
-                        "Please grant contacts permission to view or edit settings.",
+                        stringResource(R.string.permission_contacts_placeholder),
                     )
                 }
             } else {
                 SettingsGroup {
                     NavigableListItem(
-                        title = ContactEventType.BIRTHDAY.label,
+                        title = stringResource(ContactEventType.BIRTHDAY.labelResId),
                         onClick = { onNavigate("contacts/${ContactEventType.BIRTHDAY.name}") },
                     )
                     SettingsGroupDivider()
                     NavigableListItem(
-                        title = ContactEventType.ANNIVERSARY.label,
+                        title = stringResource(ContactEventType.ANNIVERSARY.labelResId),
                         onClick = { onNavigate("contacts/${ContactEventType.ANNIVERSARY.name}") },
                     )
                 }
@@ -419,7 +426,7 @@ fun HomeScreen(
 
         if (showSyncIntervalDialog) {
             RadioGroupDialog(
-                title = "Sync interval",
+                title = stringResource(R.string.pref_sync_interval),
                 options =
                     listOf(
                         null,
@@ -438,7 +445,7 @@ fun HomeScreen(
                     }
                 },
                 onDismiss = { showSyncIntervalDialog = false },
-                optionLabel = { formatDuration(it) },
+                optionLabel = { formatDuration(context, it) },
             )
         }
     }
@@ -462,7 +469,7 @@ fun CalendarDetailScreen(
                     IconButton(onClick = onNavigateUp) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.action_back),
                         )
                     }
                 },
@@ -504,7 +511,7 @@ fun ContactSettingsScreen(
                     IconButton(onClick = onNavigateUp) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.action_back),
                         )
                     }
                 },
@@ -540,24 +547,24 @@ fun ContactsSettingsGroup(
         scope.launch { repository.updateContactSettings(eventType, transform) }
     }
 
-    PreferenceCategory(title = "General")
+    PreferenceCategory(title = stringResource(R.string.category_general))
     SettingsGroup {
         SwitchPreference(
-            title = "Add timeline pins",
+            title = stringResource(R.string.pref_add_timeline_pins),
             checked = settings.timelinePins,
             onCheckedChange = { checked -> updateSettings { it.copy(timelinePins = checked) } },
         )
         SettingsGroupDivider()
         ColorPreference(
-            title = "Accent color",
+            title = stringResource(R.string.pref_accent_color),
             color = settings.color,
             onColorSelected = { color -> updateSettings { it.copy(color = color) } },
         )
     }
 
     DayAlertSettingsGroup(
-        title = "Day-of alerts",
-        switchTitle = "Day-of alerts",
+        title = stringResource(R.string.category_day_of_alerts),
+        switchTitle = stringResource(R.string.pref_day_of_alerts),
         checked = settings.dayOf,
         onCheckedChange = { checked -> updateSettings { it.copy(dayOf = checked) } },
         time = settings.dayOfTime,
@@ -566,8 +573,8 @@ fun ContactsSettingsGroup(
     )
 
     DayAlertSettingsGroup(
-        title = "Day-before alerts",
-        switchTitle = "Day-before alerts",
+        title = stringResource(R.string.category_day_before_alerts),
+        switchTitle = stringResource(R.string.pref_day_before_alerts),
         checked = settings.dayBefore,
         onCheckedChange = { checked -> updateSettings { it.copy(dayBefore = checked) } },
         time = settings.dayBeforeTime,
@@ -598,7 +605,7 @@ fun DayAlertSettingsGroup(
         var showTimeDialog by remember { mutableStateOf(false) }
         val context = LocalContext.current
         DependentValuePreference(
-            title = "Alert time",
+            title = stringResource(R.string.pref_alert_time),
             subtitle = formatTime(context, time),
             enabled = isGroupEnabled && checked,
             onClick = { showTimeDialog = true },
@@ -750,7 +757,9 @@ fun <T> RadioGroupDialog(
             }
         },
         confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+        },
     )
 }
 
@@ -773,7 +782,7 @@ fun TimePickerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Select time") },
+        title = { Text(stringResource(R.string.select_time)) },
         text = { TimePicker(state = timePickerState) },
         confirmButton = {
             TextButton(
@@ -781,10 +790,12 @@ fun TimePickerDialog(
                     onTimeSelected(LocalTime.of(timePickerState.hour, timePickerState.minute))
                 },
             ) {
-                Text("OK")
+                Text(stringResource(R.string.action_ok))
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+        },
     )
 }
 
@@ -803,27 +814,29 @@ fun CalendarSettingsGroup(
 
     val isGroupEnabled = enabled && settings.enabled
 
+    val context = LocalContext.current
+
     SettingsGroup {
         SwitchPreference(
-            title = "Enable alerts",
+            title = stringResource(R.string.pref_enable_alerts),
             checked = if (enabled) settings.enabled else false,
             enabled = enabled,
             onCheckedChange = { checked -> updateSettings { it.copy(enabled = checked) } },
         )
     }
 
-    PreferenceCategory(title = "Timed events")
+    PreferenceCategory(title = stringResource(R.string.category_timed_events))
     SettingsGroup {
         var showDurationDialog by remember { mutableStateOf(false) }
         DependentValuePreference(
-            title = "Default reminder time",
-            subtitle = formatDuration(settings.unremindedOffset),
+            title = stringResource(R.string.pref_default_reminder_time),
+            subtitle = formatDuration(context, settings.unremindedOffset),
             enabled = isGroupEnabled,
             onClick = { showDurationDialog = true },
         )
         if (showDurationDialog) {
             RadioGroupDialog(
-                title = "Default reminder time",
+                title = stringResource(R.string.pref_default_reminder_time),
                 options =
                     listOf(
                         null,
@@ -843,14 +856,14 @@ fun CalendarSettingsGroup(
                     updateSettings { it.copy(unremindedOffset = duration) }
                 },
                 onDismiss = { showDurationDialog = false },
-                optionLabel = { formatDuration(it) },
+                optionLabel = { formatDuration(context, it) },
             )
         }
     }
 
     DayAlertSettingsGroup(
-        title = "All-day events (day-of)",
-        switchTitle = "Day-of alerts",
+        title = stringResource(R.string.category_all_day_events_day_of),
+        switchTitle = stringResource(R.string.pref_day_of_alerts),
         checked = settings.dayOf,
         onCheckedChange = { checked -> updateSettings { it.copy(dayOf = checked) } },
         time = settings.dayOfTime,
@@ -859,8 +872,8 @@ fun CalendarSettingsGroup(
     )
 
     DayAlertSettingsGroup(
-        title = "All-day events (day-before)",
-        switchTitle = "Day-before alerts",
+        title = stringResource(R.string.category_all_day_events_day_before),
+        switchTitle = stringResource(R.string.pref_day_before_alerts),
         checked = settings.dayBefore,
         onCheckedChange = { checked -> updateSettings { it.copy(dayBefore = checked) } },
         time = settings.dayBeforeTime,
@@ -868,23 +881,23 @@ fun CalendarSettingsGroup(
         isGroupEnabled = isGroupEnabled,
     )
 
-    PreferenceCategory(title = "Multi-day events")
+    PreferenceCategory(title = stringResource(R.string.category_multi_day_events))
     SettingsGroup {
         var showMultiDayDialog by remember { mutableStateOf(false) }
         DependentValuePreference(
-            title = "Alerts for multi-day events",
-            subtitle = settings.multiDayMode.label,
+            title = stringResource(R.string.pref_alerts_for_multi_day_events),
+            subtitle = stringResource(settings.multiDayMode.labelResId),
             enabled = isGroupEnabled,
             onClick = { showMultiDayDialog = true },
         )
         if (showMultiDayDialog) {
             RadioGroupDialog(
-                title = "Alerts for multi-day events",
+                title = stringResource(R.string.pref_alerts_for_multi_day_events),
                 options = MultiDayAlertMode.values().toList(),
                 selectedOption = settings.multiDayMode,
                 onOptionSelected = { mode -> updateSettings { it.copy(multiDayMode = mode) } },
                 onDismiss = { showMultiDayDialog = false },
-                optionLabel = { it.label },
+                optionLabel = { context.getString(it.labelResId) },
             )
         }
     }
@@ -946,7 +959,7 @@ fun ColorPickerDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Accent color") },
+        title = { Text(stringResource(R.string.pref_accent_color)) },
         text = {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 44.dp),
@@ -980,7 +993,9 @@ fun ColorPickerDialog(
             }
         },
         confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_close)) }
+        },
     )
 }
 

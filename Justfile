@@ -28,3 +28,7 @@ build-android:
 install-android:
     ./gradlew installDebug
     adb shell am start -n sh.eliza.pebble.calnotify/.MainActivity
+
+# Format all Kotlin sources
+format:
+    find . -name '*.kt' -exec ktlint -F {} +

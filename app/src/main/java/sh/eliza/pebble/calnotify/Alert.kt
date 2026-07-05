@@ -311,10 +311,7 @@ private fun createTimedCalendarAlerts(
     offsets: List<Duration>,
 ): Sequence<Alert> =
     sequence {
-        val finalOffsets =
-            offsets.ifEmpty {
-                listOfNotNull(config.unremindedOffset)
-            }
+        val finalOffsets = offsets.ifEmpty { listOfNotNull(config.unremindedOffset) }
 
         for (offset in finalOffsets) {
             yield(

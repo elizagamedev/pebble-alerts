@@ -48,18 +48,18 @@ private fun MutablePreferences.writeOptionalDuration(
 }
 
 enum class MultiDayAlertMode(
-    val label: String,
+    val labelResId: Int,
 ) {
-    OFF("Off"),
-    FIRST_DAY("Alert on first day"),
-    EVERY_DAY("Alert every day"),
+    OFF(R.string.multi_day_mode_off),
+    FIRST_DAY(R.string.multi_day_mode_first_day),
+    EVERY_DAY(R.string.multi_day_mode_every_day),
 }
 
 enum class ContactEventType(
-    val label: String,
+    val labelResId: Int,
 ) {
-    BIRTHDAY("Birthdays"),
-    ANNIVERSARY("Anniversaries"),
+    BIRTHDAY(R.string.contact_event_type_birthday),
+    ANNIVERSARY(R.string.contact_event_type_anniversary),
 }
 
 data class GeneralSettings(
