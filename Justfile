@@ -1,6 +1,5 @@
 emulator := "emery"
-phone := "192.168.0.117"
-zig_opts := "-Dpebble_sdk_path=" + justfile_directory() + "/.pebble-data/pebble-sdk/SDKs/current"
+phone := "192.168.0.69"
 
 # Build both pebble and android apps
 build: build-pebble build-android
@@ -10,15 +9,15 @@ install: install-pebble install-android
 
 # Build the Pebble app
 build-pebble:
-    zig build {{zig_opts}}
-
-# Run the Pebble app on the emulator
-run-pebble:
-    PEBBLE_EMULATOR={{emulator}} zig build {{zig_opts}} upload
+    pebble build
 
 # Install the Pebble app on a device
-install-pebble:
-    PEBBLE_PHONE={{phone}} zig build {{zig_opts}} upload
+install-pebble: build-pebble
+    pebble install --phone {{phone}}
+
+# View pebble logs
+logs-pebble:
+    pebble logs --phone {{phone}}
 
 # Build the Android app
 build-android:
@@ -29,10 +28,16 @@ install-android:
     ./gradlew installDebug
     adb shell am start -n sh.eliza.pebble.calnotify/.MainActivity
 
-# View pebble logs
-logs-pebble:
-    pebble logs --phone {{phone}}
+# Pair ADB with Android over Wi-Fi
+pair-android port code:
+    adb pair {{phone}}:{{port}} {{code}}
 
-# Format all Kotlin sources
+# Format all sources
+# TODO add clang-format, nixfmt
 format:
-    find . -name '*.kt' -exec ktlint -F {} +
+    fd -e kt . | xargs ktlint -F
+
+# Clean all build files
+clean:
+    rm -rf .cache/ .gradle/ .kotlin/ build/ app/build/ \
+    .lock-waf_linux_build compile_commands.json

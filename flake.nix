@@ -1,5 +1,5 @@
 {
-  description = "Pebble Time 2 Zig dev environment";
+  description = "Pebble Calendar Alerts dev environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -22,29 +22,31 @@
         };
 
         androidComposition = pkgs.androidenv.composeAndroidPackages {
-          platformVersions = [ "36" "24" ];
+          platformVersions = [
+            # TODO: Do we need both of these?
+            "36"
+            "24"
+          ];
           buildToolsVersions = [ "35.0.0" ];
         };
 
         pebble-wrapper = pkgs.writeShellScriptBin "pebble" ''
-          exec uv run --with pebble-tool env XDG_DATA_HOME="$PWD/.pebble-data" pebble "$@"
+          exec ${pkgs.uv}/bin/uv run --with pebble-tool pebble "$@"
         '';
       in
       {
-        devShells.default = pkgs.mkShell {
+        devShells.default = pkgs.mkShellNoCC {
           buildInputs = with pkgs; [
+            android-studio
+            androidComposition.androidsdk
+            jdk17
             just
+            kotlin-language-server
+            ktlint
+            llvmPackages.clang-unwrapped
             nodejs
             pebble-wrapper
             python3
-            uv
-            zig
-            jdk17
-            android-studio
-            androidComposition.androidsdk
-            kotlin-language-server
-            ktlint
-            zls
           ];
 
           shellHook = ''
@@ -68,7 +70,8 @@
               )
             }:$LD_LIBRARY_PATH"
 
-            if [ ! -d .pebble-data/pebble-sdk/SDKs/current ]; then
+            # TODO: make this respect XDG_DATA_HOME
+            if [ ! -d ~/.local/share/pebble-sdk/SDKs/current ]; then
               pebble sdk install latest
             fi
           '';

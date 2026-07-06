@@ -1,7 +1,12 @@
-/.pebble-data/
-/.zig-cache/
-/zig-out/
-/zig-pkg/
+# clangd
+/.cache/
+
+# Pebble
+/build/
+/compile_commands.json
+/.lock-waf_*
+
+# Nix/direnv
 /.direnv/
 
 # Android
@@ -29,8 +34,6 @@
 /.idea/inspectionProfiles
 /.kotlin
 .DS_Store
-/build
 /captures
 .externalNativeBuild
 .cxx
-local.properties

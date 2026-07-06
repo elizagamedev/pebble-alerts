@@ -1,0 +1,49 @@
+{
+  "name": "calnotify",
+  "author": "Eliza",
+  "version": "0.1.0",
+  "keywords": ["pebble-app"],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "Calendar Alerts",
+    "uuid": "075a861e-c60b-4bb6-b3f2-b592925e86b1",
+    "sdkVersion": "3",
+    "targetPlatforms": [
+      "emery",
+      "gabbro"
+    ],
+    "watchapp": {
+      "watchface": false,
+      "hiddenApp": true
+    },
+    "messageKeys": [],
+    "resources": {
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "IMAGE_ICON_SNOOZE",
+          "file": "images/icon_snooze.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_ICON_DISMISS",
+          "file": "images/icon_dismiss.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "IMAGE_ICON_READ_MORE",
+          "file": "images/icon_read_more.png"
+        }
+      ]
+    },
+    "companionApp": {
+      "android": {
+        "url": "https://github.com/TODO",
+        "apps": [
+          { "package": "sh.eliza.pebble.calnotify" }
+        ]
+      }
+    }
+  }
+}
