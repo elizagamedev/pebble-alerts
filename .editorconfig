@@ -5,6 +5,9 @@ indent_style = space
 indent_size = 4
 max_line_length = 100
 ktlint_standard_function-naming = disabled
+ktlint_standard_import-ordering = enabled
+kotlin_imports_layout = idea
+ktlint_standard_no-unused-imports = enabled
 
 [*.c]
 indent_style = space

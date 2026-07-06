@@ -26,7 +26,7 @@ private val DEFAULT_DAY_BEFORE_TIME = LocalTime.of(18, 0) // 6:00 PM
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
-private fun Preferences.readOptionalDuration(
+private fun Preferences.readDuration(
     key: String,
     default: Duration?,
 ): Duration? {
@@ -40,7 +40,7 @@ private fun Preferences.readOptionalDuration(
     }
 }
 
-private fun MutablePreferences.writeOptionalDuration(
+private fun MutablePreferences.writeDuration(
     key: String,
     value: Duration?,
 ) {
@@ -63,25 +63,19 @@ enum class ContactEventType(
 }
 
 data class GeneralSettings(
-    val syncInterval: Duration?,
+    val snoozeDuration: Duration,
 ) {
     fun updatePrefs(prefs: MutablePreferences) {
-        prefs.writeOptionalDuration("general_sync_interval", syncInterval)
+        prefs.writeDuration("general_snooze_duration", snoozeDuration)
     }
 
     companion object {
-        val DEFAULT =
-            GeneralSettings(
-                syncInterval = 60.minutes,
-            )
+        val DEFAULT = GeneralSettings(snoozeDuration = 10.minutes)
 
         fun createFromPrefs(prefs: Preferences): GeneralSettings =
             GeneralSettings(
-                syncInterval =
-                    prefs.readOptionalDuration(
-                        "general_sync_interval",
-                        DEFAULT.syncInterval,
-                    ),
+                snoozeDuration =
+                    prefs.readDuration("general_snooze_duration", null) ?: DEFAULT.snoozeDuration,
             )
     }
 }
@@ -106,7 +100,7 @@ data class CalendarSettings(
         id: Long,
     ) {
         prefs[booleanPreferencesKey("calendar_${id}_enable")] = enabled
-        prefs.writeOptionalDuration("calendar_${id}_unreminded_offset", unremindedOffset)
+        prefs.writeDuration("calendar_${id}_unreminded_offset", unremindedOffset)
         prefs[booleanPreferencesKey("calendar_${id}_day_of")] = dayOf
         prefs[intPreferencesKey("calendar_${id}_day_of_time")] = dayOfTime.toSecondOfDay()
         prefs[booleanPreferencesKey("calendar_${id}_day_before")] = dayBefore
@@ -145,7 +139,7 @@ data class CalendarSettings(
                 if (notifyUnreminded == false) {
                     null
                 } else {
-                    prefs.readOptionalDuration(
+                    prefs.readDuration(
                         "calendar_${id}_unreminded_offset",
                         if (notifyUnreminded == true) 10.minutes else DEFAULT.unremindedOffset,
                     )

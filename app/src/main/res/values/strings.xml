@@ -3,7 +3,7 @@
 
     <!-- General category and preferences -->
     <string name="category_general">General</string>
-    <string name="pref_sync_interval">Sync interval</string>
+    <string name="pref_snooze_duration">Snooze duration</string>
     <string name="duration_off">Off</string>
     <string name="duration_when_event_starts">When event starts</string>
 

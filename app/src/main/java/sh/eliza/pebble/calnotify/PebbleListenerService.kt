@@ -1,18 +1,29 @@
 package sh.eliza.pebble.calnotify
 
-import android.util.Log
 import io.rebble.pebblekit2.client.BasePebbleListenerService
-import io.rebble.pebblekit2.common.model.PebbleDictionary
-import io.rebble.pebblekit2.common.model.PebbleDictionaryItem
-import io.rebble.pebblekit2.common.model.ReceiveResult
 import io.rebble.pebblekit2.common.model.WatchIdentifier
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val MSG_POLL = 0u
 
 class PebbleListenerService : BasePebbleListenerService() {
+    companion object {
+        val inhibitUpdates = AtomicBoolean(false)
+
+        inline fun <T> withInhibitUpdates(body: () -> T): T {
+            inhibitUpdates.set(true)
+            try {
+                return body()
+            } finally {
+                inhibitUpdates.set(false)
+            }
+        }
+    }
+
     private lateinit var pebbleManager: PebbleManager
 
     override fun onCreate() {
@@ -25,36 +36,21 @@ class PebbleListenerService : BasePebbleListenerService() {
         super.onDestroy()
     }
 
-    override suspend fun onMessageReceived(
+    override fun onAppOpened(
         watchappUUID: UUID,
-        data: PebbleDictionary,
         watch: WatchIdentifier,
-    ): ReceiveResult =
-        try {
-            require(watchappUUID == PebbleManager.APP_UUID) {
-                "Expected watchapp UUID ${PebbleManager.APP_UUID}, but got: $watchappUUID"
-            }
-
-            val item = data[MSG_POLL]
-            require(item is PebbleDictionaryItem.UInt32) {
-                "Expected UInt32 command at key $MSG_POLL, but got: $item"
-            }
-
-            when (item.value) {
-                MSG_POLL -> onPoll(watch)
-                else -> throw IllegalArgumentException("Unknown command: ${item.value}")
-            }
-
-            ReceiveResult.Ack
-        } catch (e: Throwable) {
-            Log.e("PebbleListenerService", "Failed to handle message", e)
-            ReceiveResult.Nack
+    ) {
+        if (watchappUUID != PebbleManager.APP_UUID) {
+            return
         }
-
-    private suspend fun onPoll(watch: WatchIdentifier) {
-        val settingsRepository = SettingsRepository(dataStore, coroutineScope)
-        val settings = settingsRepository.appSettingsFlow.filterNotNull().first()
-        val alerts = Alert.getUpcomingAlerts(this, settings)
-        pebbleManager.postAlerts(alerts, watch)
+        if (inhibitUpdates.get()) {
+            return
+        }
+        coroutineScope.launch {
+            val settingsRepository = SettingsRepository(dataStore, coroutineScope)
+            val settings = settingsRepository.appSettingsFlow.filterNotNull().first()
+            val alerts = Alert.getUpcomingAlerts(applicationContext, settings)
+            pebbleManager.send(settings.generalSettings, alerts, watch)
+        }
     }
 }

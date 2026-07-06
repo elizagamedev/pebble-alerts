@@ -295,8 +295,8 @@ fun HomeScreen(
     }
     var calendars by remember { mutableStateOf(getDeviceCalendars(context)) }
 
-    val syncInterval = settings.generalSettings.syncInterval
-    var showSyncIntervalDialog by remember { mutableStateOf(false) }
+    val snoozeDuration = settings.generalSettings.snoozeDuration
+    var showSnoozeDurationDialog by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
     DisposableEffect(lifecycleOwner) {
@@ -326,10 +326,10 @@ fun HomeScreen(
             PreferenceCategory(title = stringResource(R.string.category_general))
             SettingsGroup {
                 DependentValuePreference(
-                    title = stringResource(R.string.pref_sync_interval),
-                    subtitle = formatDuration(context, syncInterval),
+                    title = stringResource(R.string.pref_snooze_duration),
+                    subtitle = formatDuration(context, snoozeDuration),
                     enabled = true,
-                    onClick = { showSyncIntervalDialog = true },
+                    onClick = { showSnoozeDurationDialog = true },
                 )
             }
 
@@ -424,27 +424,26 @@ fun HomeScreen(
             }
         }
 
-        if (showSyncIntervalDialog) {
+        if (showSnoozeDurationDialog) {
             RadioGroupDialog(
-                title = stringResource(R.string.pref_sync_interval),
+                title = stringResource(R.string.pref_snooze_duration),
                 options =
                     listOf(
-                        null,
+                        1.minutes,
+                        2.minutes,
+                        3.minutes,
+                        5.minutes,
+                        10.minutes,
                         15.minutes,
                         30.minutes,
-                        1.hours,
-                        3.hours,
-                        6.hours,
-                        12.hours,
-                        24.hours,
                     ),
-                selectedOption = syncInterval,
+                selectedOption = snoozeDuration,
                 onOptionSelected = { duration ->
                     coroutineScope.launch {
-                        repository.updateGeneralSettings { it.copy(syncInterval = duration) }
+                        repository.updateGeneralSettings { it.copy(snoozeDuration = duration) }
                     }
                 },
-                onDismiss = { showSyncIntervalDialog = false },
+                onDismiss = { showSnoozeDurationDialog = false },
                 optionLabel = { formatDuration(context, it) },
             )
         }

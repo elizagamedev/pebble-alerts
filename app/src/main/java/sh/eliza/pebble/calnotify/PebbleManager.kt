@@ -6,13 +6,15 @@ import io.rebble.pebblekit2.client.PebbleSender
 import io.rebble.pebblekit2.common.model.PebbleDictionaryItem
 import io.rebble.pebblekit2.common.model.TransmissionResult
 import io.rebble.pebblekit2.common.model.WatchIdentifier
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.util.UUID
 
-private const val MSG_POST_SETTINGS = 0u
-private const val MSG_POST_ALERTS = 1u
-
-private const val MAX_ALERTS = 32
+private const val MSG_VERSION = 0u
+private const val MAX_ALERTS = 5
 
 class PebbleManager(
     private val context: Context,
@@ -31,48 +33,76 @@ class PebbleManager(
         return result?.values?.any { it == TransmissionResult.Success } == true
     }
 
-    suspend fun postSettings(
+    suspend fun send(
         settings: GeneralSettings,
-        watch: WatchIdentifier? = null,
-    ) {
-        val dict =
-            mapOf<UInt, PebbleDictionaryItem>(
-                0u to PebbleDictionaryItem.UInt32(MSG_POST_SETTINGS),
-                1u to
-                    PebbleDictionaryItem.Int32(
-                        settings.syncInterval?.inWholeSeconds?.toInt() ?: -1,
-                    ),
-            )
-        sender.sendDataToPebble(APP_UUID, dict, watch?.let { listOf(it) })
-    }
-
-    suspend fun postAlerts(
         alerts: Sequence<Alert>,
         watch: WatchIdentifier? = null,
     ) {
         val now = Instant.now()
-        val filteredAlerts = alerts.filter { it.startTime >= now }.take(MAX_ALERTS).toList()
+        val filteredAlerts = alerts.filter { now <= it.endTime }.take(MAX_ALERTS).toList()
+
+        // Convert all strings into a heap.
+        val (stringHeap, strings) =
+            makeStringHeap(
+                mutableSetOf<String>().apply {
+                    filteredAlerts.forEach {
+                        add(it.calendarName)
+                        add(it.title)
+                        add(it.details)
+                        add(it.location)
+                    }
+                },
+            )
+
+        val payloadLength = (4 + filteredAlerts.size * 10) * 4 + stringHeap.size
+
+        val payload =
+            ByteBuffer.allocate(payloadLength).apply {
+                order(ByteOrder.LITTLE_ENDIAN)
+
+                putInt(settings.snoozeDuration.inWholeSeconds.toInt())
+                putInt(filteredAlerts.size)
+                putInt(stringHeap.size)
+                putInt(0) // reserved
+
+                filteredAlerts.forEach { alert ->
+                    putInt(alert.id.toInt())
+                    putInt(alert.alertTime.epochSecond.toInt())
+                    putInt(alert.startTime.epochSecond.toInt())
+                    putInt(alert.endTime.epochSecond.toInt())
+                    putInt(alert.color.toInt())
+                    putInt(strings.getValue(alert.calendarName))
+                    putInt(strings.getValue(alert.title))
+                    putInt(strings.getValue(alert.details))
+                    putInt(strings.getValue(alert.location))
+                    putInt(0) // reserved
+                }
+
+                put(stringHeap)
+
+                check(!hasRemaining())
+            }
 
         val dict =
-            mutableMapOf<UInt, PebbleDictionaryItem>(
-                0u to PebbleDictionaryItem.UInt32(MSG_POST_ALERTS),
-                1u to PebbleDictionaryItem.UInt32(filteredAlerts.size.toUInt()),
+            mapOf<UInt, PebbleDictionaryItem>(
+                0u to PebbleDictionaryItem.UInt32(MSG_VERSION),
+                1u to PebbleDictionaryItem.Bytes(payload.array()),
             )
-        val size = 9u
-        val start = 2u
-        filteredAlerts.forEachIndexed { i, alert ->
-            val base = start + size * i.toUInt()
-            dict[base + 0u] = PebbleDictionaryItem.UInt32(alert.id)
-            dict[base + 1u] = PebbleDictionaryItem.Text(alert.calendarName)
-            dict[base + 2u] = PebbleDictionaryItem.Text(alert.title)
-            dict[base + 3u] = PebbleDictionaryItem.Text(alert.details)
-            dict[base + 4u] = PebbleDictionaryItem.Text(alert.location)
-            dict[base + 5u] = PebbleDictionaryItem.UInt32(alert.startTime.epochSecond.toUInt())
-            dict[base + 6u] = PebbleDictionaryItem.UInt32(alert.endTime.epochSecond.toUInt())
-            dict[base + 7u] = PebbleDictionaryItem.UInt32(alert.alertTime.epochSecond.toUInt())
-            dict[base + 8u] = PebbleDictionaryItem.UInt8(alert.color.toUByte())
-        }
+
         sender.sendDataToPebble(APP_UUID, dict, watch?.let { listOf(it) })
+    }
+
+    fun makeStringHeap(strings: Set<String>): Pair<ByteArray, Map<String, Int>> {
+        val outputStream = ByteArrayOutputStream()
+        val offsetMap = mutableMapOf<String, Int>()
+
+        for (str in strings) {
+            offsetMap[str] = outputStream.size()
+            outputStream.write(str.toByteArray(StandardCharsets.UTF_8))
+            outputStream.write(0)
+        }
+
+        return Pair(outputStream.toByteArray(), offsetMap)
     }
 
     companion object {

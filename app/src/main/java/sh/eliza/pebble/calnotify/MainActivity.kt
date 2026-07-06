@@ -14,9 +14,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import sh.eliza.pebble.calnotify.ui.theme.AppTheme
 
@@ -36,31 +34,16 @@ class MainActivity : ComponentActivity() {
 
         splashScreen.setKeepOnScreenCondition { settingsRepository.appSettingsFlow.value == null }
 
-        // Reactively push alerts to the watch whenever alert-specific settings change
         lifecycleScope.launch {
             settingsRepository.appSettingsFlow
                 .filterNotNull()
-                .drop(1) // Skip the initial emission on app launch
-                .distinctUntilChanged { old, new ->
-                    old.calendarSettings == new.calendarSettings &&
-                        old.contactSettings == new.contactSettings
-                }.collectLatest { settings ->
-                    val alerts = Alert.getUpcomingAlerts(this@MainActivity, settings)
-                    if (pebbleManager.openAppOnWatch()) {
-                        pebbleManager.postAlerts(alerts)
-                    }
-                }
-        }
-
-        // Reactively push sync interval setting to the watch whenever it changes
-        lifecycleScope.launch {
-            settingsRepository.appSettingsFlow
-                .filterNotNull()
-                .map { it.generalSettings }
-                .drop(1) // Skip the initial emission on app launch
+                .distinctUntilChanged()
                 .collectLatest { settings ->
-                    if (pebbleManager.openAppOnWatch()) {
-                        pebbleManager.postSettings(settings)
+                    val alerts = Alert.getUpcomingAlerts(this@MainActivity, settings)
+                    PebbleListenerService.withInhibitUpdates {
+                        if (pebbleManager.openAppOnWatch()) {
+                            pebbleManager.send(settings.generalSettings, alerts)
+                        }
                     }
                 }
         }
