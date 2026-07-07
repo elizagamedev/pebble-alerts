@@ -4,6 +4,9 @@
     <!-- General category and preferences -->
     <string name="category_general">General</string>
     <string name="pref_snooze_duration">Snooze duration</string>
+    <string name="pref_sync_now">Sync now</string>
+    <string name="sync_never">Last synced: Never</string>
+    <string name="sync_time">Last synced: %1$s %2$s</string>
     <string name="duration_off">Off</string>
     <string name="duration_when_event_starts">When event starts</string>
 

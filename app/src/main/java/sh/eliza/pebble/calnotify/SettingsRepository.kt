@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.CoroutineScope
@@ -64,18 +65,25 @@ enum class ContactEventType(
 
 data class GeneralSettings(
     val snoozeDuration: Duration,
+    val lastSynced: Long?,
 ) {
     fun updatePrefs(prefs: MutablePreferences) {
         prefs.writeDuration("general_snooze_duration", snoozeDuration)
+        if (lastSynced != null) {
+            prefs[longPreferencesKey("general_last_synced")] = lastSynced
+        } else {
+            prefs.remove(longPreferencesKey("general_last_synced"))
+        }
     }
 
     companion object {
-        val DEFAULT = GeneralSettings(snoozeDuration = 10.minutes)
+        val DEFAULT = GeneralSettings(snoozeDuration = 10.minutes, lastSynced = null)
 
         fun createFromPrefs(prefs: Preferences): GeneralSettings =
             GeneralSettings(
                 snoozeDuration =
                     prefs.readDuration("general_snooze_duration", null) ?: DEFAULT.snoozeDuration,
+                lastSynced = prefs[longPreferencesKey("general_last_synced")],
             )
     }
 }

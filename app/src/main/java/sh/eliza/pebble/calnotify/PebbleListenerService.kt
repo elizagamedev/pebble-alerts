@@ -51,6 +51,11 @@ class PebbleListenerService : BasePebbleListenerService() {
             val settings = settingsRepository.appSettingsFlow.filterNotNull().first()
             val alerts = Alert.getUpcomingAlerts(applicationContext, settings)
             pebbleManager.send(settings.generalSettings, alerts, watch)
+            settingsRepository.updateGeneralSettings {
+                it.copy(
+                    lastSynced = System.currentTimeMillis(),
+                )
+            }
         }
     }
 }

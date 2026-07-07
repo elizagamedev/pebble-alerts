@@ -11,6 +11,10 @@
 #define MESSAGE_KEY_HEADER 1u
 #define MESSAGE_KEY_STRING_HEAP 2u
 
+#define WAKEUP_ID_DISMISSED ((WakeupId)(-1))
+#define WAKEUP_ID_UNSCHEDULED ((WakeupId)(0))
+#define ALERT_QUEUE_EMPTY UINT32_MAX
+
 typedef enum {
   APP_MODE_REFRESH,
   APP_MODE_ALERT,
@@ -37,14 +41,9 @@ typedef struct {
 } AlertData;
 
 typedef struct {
-  uint32_t id;
-  time_t alert_time;
-} DismissedAlert;
-
-typedef struct {
   Settings settings;
   AlertData alerts[MAX_ALERTS];
-  DismissedAlert dismissed[MAX_ALERTS];
+  WakeupId wakeup_ids[MAX_ALERTS];
 } PersistHeader;
 
 typedef struct {
@@ -53,7 +52,8 @@ typedef struct {
 } Persist;
 
 static AppMode s_app_mode;
-static bool s_persist_dirty;
+static bool s_backbuffer_dirty;
+static bool s_frontbuffer_dirty;
 
 static Persist s_persist;
 static Persist s_persist_backbuffer;
@@ -74,8 +74,7 @@ static GBitmap *s_icon_snooze;
 static GBitmap *s_icon_dismiss;
 static GBitmap *s_icon_read_more;
 
-// Backing UI data
-static const AlertData *s_alert_queue[MAX_ALERTS];
+static uint32_t s_alert_queue[MAX_ALERTS];
 static char s_time_buf[16];
 static char s_start_time_buf[16];
 static char s_end_time_buf[16];
@@ -83,6 +82,8 @@ static char s_end_time_buf[16];
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+static void prv_persist_relocate(Persist *persist, int32_t sign);
 
 // Format an epoch as a local clock string into buf.
 static void prv_format_time(char *buf, size_t len, uint32_t epoch) {
@@ -95,43 +96,57 @@ static void prv_format_time(char *buf, size_t len, uint32_t epoch) {
   }
 }
 
-static void prv_dismiss(Persist *persist, const AlertData *alert) {
-  int32_t insert_index = -1;
-  for (uint32_t i = 0; i < MAX_ALERTS; i++) {
-    if (memcmp(&persist->header.dismissed[i], alert, sizeof(DismissedAlert)) == 0) {
-      return;
-    }
-    if (persist->header.dismissed[i].alert_time == 0) {
-      insert_index = i;
-    }
+static void prv_cancel_wakeup(WakeupId id) {
+  if (id > 0) {
+    APP_LOG(APP_LOG_LEVEL_INFO, "cancelling wakeup ID %d", (int)id);
+    wakeup_cancel(id);
   }
-  if (insert_index == -1) {
-    APP_LOG(APP_LOG_LEVEL_WARNING, "dismiss set overflow");
+}
+
+static void prv_schedule_alert(Persist *persist, uint32_t index) {
+  time_t now = time(NULL);
+  time_t alert_time = persist->header.alerts[index].alert_time;
+  if (alert_time <= now) {
+    APP_LOG(APP_LOG_LEVEL_INFO, "alert %s in the past at %u", persist->header.alerts[index].title,
+            persist->header.alerts[index].alert_time);
+    // TODO: properly loop the app to handle this case, or drop these alerts altogether.
+    alert_time = now + 10;
+  }
+  WakeupId id = wakeup_schedule(alert_time, 0, false);
+  if (id > 0) {
+    persist->header.wakeup_ids[index] = id;
   } else {
-    memcpy(&persist->header.dismissed[insert_index], alert, sizeof(DismissedAlert));
-    s_persist_dirty = true;
+    APP_LOG(APP_LOG_LEVEL_ERROR, "failed to schedule alert %u: %d",
+            (unsigned int)persist->header.alerts[index].id, (int)id);
+    persist->header.wakeup_ids[index] = WAKEUP_ID_UNSCHEDULED;
   }
 }
 
-static bool prv_is_dismissed(const Persist *persist, const AlertData *alert) {
-  for (uint32_t i = 0; i < MAX_ALERTS; i++) {
-    if (memcmp(&persist->header.dismissed[i], alert, sizeof(DismissedAlert)) == 0) {
-      return true;
-    }
-  }
-  return false;
-}
+static void prv_reconcile_wakeup_ids(Persist *front, Persist *back) {
+  // 1. Migrate all wakeup IDs to corresponding entries in the backbuffer if they exist, otherwise
+  // cancel them.
+  if (front != back) {
+    for (uint32_t f = 0; f < front->header.settings.num_alerts; f++) {
+      WakeupId f_wid = front->header.wakeup_ids[f];
 
-static void prv_clear_stale_dismissed_alerts(Persist *persist) {
-  for (uint32_t i = 0; i < MAX_ALERTS; i++) {
-    for (uint32_t j = 0; j < persist->header.settings.num_alerts; j++) {
-      if (memcmp(&persist->header.dismissed[i], &persist->header.alerts[j],
-                 sizeof(DismissedAlert)) == 0) {
-        goto next;
+      for (uint32_t b = 0; b < back->header.settings.num_alerts; b++) {
+        if (back->header.alerts[b].id == front->header.alerts[f].id &&
+            back->header.alerts[b].alert_time == front->header.alerts[f].alert_time) {
+          back->header.wakeup_ids[b] = f_wid;
+          goto next;
+        }
       }
+
+      prv_cancel_wakeup(f_wid);
+    next:;
     }
-    memset(&persist->header.dismissed[i], 0, sizeof(DismissedAlert));
-  next:;
+  }
+
+  // 2. Schedule any alerts that are still WAKEUP_ID_UNSCHEDULED.
+  for (uint32_t b = 0; b < back->header.settings.num_alerts; b++) {
+    if (back->header.wakeup_ids[b] == WAKEUP_ID_UNSCHEDULED) {
+      prv_schedule_alert(back, b);
+    }
   }
 }
 
@@ -168,20 +183,57 @@ static void prv_back_click_handler(ClickRecognizerRef recognizer, void *context)
 }
 
 static void prv_snooze_click_handler(ClickRecognizerRef recognizer, void *context) {
-  const AlertData *alert = s_alert_queue[0];
-  WakeupId id =
-      wakeup_schedule(time(NULL) + s_persist.header.settings.snooze_duration, alert->id, false);
-  if (id >= 0) {
-    APP_LOG(APP_LOG_LEVEL_INFO, "snooze scheduled for alert %u", alert->id);
+  uint32_t idx = s_alert_queue[0];
+  if (idx == ALERT_QUEUE_EMPTY) {
+    APP_LOG(APP_LOG_LEVEL_ERROR, "attempted to snooze but no alerts in queue!");
+    window_stack_pop(true);
+    return;
+  }
+  const AlertData *alert = &s_persist.header.alerts[idx];
+  time_t snooze_time = time(NULL) + s_persist.header.settings.snooze_duration;
+
+  // Check if there is another alert with the same ID whose alert_time is <= snooze_time
+  // and > the current alert's time. If so, dismiss this reminder instead.
+  bool supplanted = false;
+  for (uint32_t i = 0; i < s_persist.header.settings.num_alerts; i++) {
+    if (i != idx && s_persist.header.alerts[i].id == alert->id &&
+        s_persist.header.alerts[i].alert_time > alert->alert_time &&
+        s_persist.header.alerts[i].alert_time <= snooze_time) {
+      supplanted = true;
+      break;
+    }
+  }
+
+  prv_cancel_wakeup(s_persist.header.wakeup_ids[idx]);
+
+  if (supplanted) {
+    APP_LOG(APP_LOG_LEVEL_INFO, "snooze for alert %u supplanted by next reminder, dismissing",
+            alert->id);
+    s_persist.header.wakeup_ids[idx] = WAKEUP_ID_DISMISSED;
     window_stack_pop(true);
   } else {
-    APP_LOG(APP_LOG_LEVEL_INFO, "unable to schedule snooze for alert %u: %d", alert->id, id);
-    prv_fail_to_snooze();
+    WakeupId id = wakeup_schedule(snooze_time, 0, false);
+    if (id > 0) {
+      s_persist.header.wakeup_ids[idx] = id;
+      APP_LOG(APP_LOG_LEVEL_INFO, "snooze scheduled for alert %u", (unsigned int)alert->id);
+      window_stack_pop(true);
+    } else {
+      APP_LOG(APP_LOG_LEVEL_ERROR, "unable to schedule snooze for alert %u: %d",
+              (unsigned int)alert->id, (int)id);
+      s_persist.header.wakeup_ids[idx] = WAKEUP_ID_UNSCHEDULED;
+      prv_fail_to_snooze();
+    }
   }
+  s_frontbuffer_dirty = true;
 }
 
 static void prv_dismiss_click_handler(ClickRecognizerRef recognizer, void *context) {
-  prv_dismiss(&s_persist, s_alert_queue[0]);
+  uint32_t idx = s_alert_queue[0];
+  if (idx != ALERT_QUEUE_EMPTY) {
+    prv_cancel_wakeup(s_persist.header.wakeup_ids[idx]);
+    s_persist.header.wakeup_ids[idx] = WAKEUP_ID_DISMISSED;
+    s_frontbuffer_dirty = true;
+  }
   window_stack_pop(true);
 }
 
@@ -215,7 +267,7 @@ static void prv_alert_window_load(Window *window) {
   int16_t width = bounds.size.w - ACTION_BAR_WIDTH;
   int16_t text_width = width - 2 * H_MARGIN;
 
-  const AlertData *alert = s_alert_queue[0];
+  const AlertData *alert = &s_persist.header.alerts[s_alert_queue[0]];
 
   prv_format_time(s_start_time_buf, sizeof(s_start_time_buf), alert->start_time);
   prv_format_time(s_end_time_buf, sizeof(s_end_time_buf), alert->end_time);
@@ -471,21 +523,29 @@ static bool prv_persist_read(Persist *persist) {
   return true;
 }
 
-static void prv_persist_write(Persist *persist) {
+static bool prv_persist_write_header(Persist *persist) {
   status_t status = persist_write_int(MESSAGE_KEY_VERSION, MESSAGE_VERSION);
   if (status != 4) {
     APP_LOG(APP_LOG_LEVEL_ERROR, "failed to write persist version: %d", status);
-    return;
+    return false;
   }
 
-  // Clear out any stale dismissed IDs.
-  prv_clear_stale_dismissed_alerts(persist);
   prv_persist_relocate(persist, -1);
 
-  // Persist.
   status = persist_write_data(MESSAGE_KEY_HEADER, &persist->header, sizeof(PersistHeader));
+
+  prv_persist_relocate(persist, 1);
+
   if (status != sizeof(PersistHeader)) {
     APP_LOG(APP_LOG_LEVEL_ERROR, "failed to write persist payload: %d", status);
+    return false;
+  }
+
+  return true;
+}
+
+static void prv_persist_write(Persist *persist) {
+  if (!prv_persist_write_header(persist)) {
     return;
   }
 
@@ -511,10 +571,10 @@ static void prv_persist_write(Persist *persist) {
     }
   }
   for (; chunk < sizeof(persist->string_heap) / PERSIST_DATA_MAX_LENGTH; chunk++) {
-    status = persist_delete(chunk);
+    status_t status = persist_delete(chunk);
     if (status != S_TRUE && status != E_DOES_NOT_EXIST) {
       APP_LOG(APP_LOG_LEVEL_ERROR, "failed to delete persist string heap chunk %u: %d", chunk,
-              status);
+              (int)status);
       return;
     }
   }
@@ -561,12 +621,11 @@ static void prv_parse_message(DictionaryIterator *iter, Persist *persist) {
   memcpy(persist->header.alerts, &payload[sizeof(Settings)], payloads_size);
   memcpy(persist->string_heap, &payload[sizeof(Settings) + payloads_size],
          persist->header.settings.string_heap_size);
+  memset(persist->header.wakeup_ids, 0, sizeof(persist->header.wakeup_ids));
 
   prv_persist_relocate(persist, 1);
 
-  // Schedule alerts for eac
-
-  s_persist_dirty = true;
+  s_backbuffer_dirty = true;
 }
 
 static void prv_inbox_received_callback(DictionaryIterator *iter, void *context) {
@@ -599,76 +658,59 @@ static bool prv_begin_listening(Persist *persist) {
 // Init & Main
 // ---------------------------------------------------------------------------
 
-static const AlertData *prv_get_alert(uint32_t alert_id) {
-  time_t now = time(NULL);
-  // Find the last alert which is earlier than now.
-  const AlertData *best_alert = NULL;
-  for (uint32_t i = 0; i < MAX_ALERTS; i++) {
-    const AlertData *alert = &s_persist.header.alerts[i];
-    if (alert->id == alert_id && alert->alert_time <= now) {
-      best_alert = alert;
-    }
-  }
-  if (!best_alert) {
-    APP_LOG(APP_LOG_LEVEL_INFO, "woke for alert %u but it was missing", alert_id);
-    return NULL;
-  }
-  return best_alert;
-}
-
 static void prv_wakeup_callback(WakeupId id, int32_t cookie) {
-  uint32_t queue_index = 0;
-  for (; queue_index < MAX_ALERTS; queue_index++) {
-    if (s_alert_queue[queue_index] == NULL) {
-      break;
-    }
-    if (s_alert_queue[queue_index]->id == (uint32_t)cookie) {
-      APP_LOG(APP_LOG_LEVEL_INFO, "woke for alert %u but it was already scheduled",
-              (uint32_t)cookie);
+  for (uint32_t i = 0; i < s_persist.header.settings.num_alerts; i++) {
+    if (s_persist.header.wakeup_ids[i] == id) {
+      for (uint32_t q = 0; q < MAX_ALERTS; q++) {
+        if (s_alert_queue[q] == ALERT_QUEUE_EMPTY) {
+          s_alert_queue[q] = i;
+          return;
+        }
+      }
+      APP_LOG(APP_LOG_LEVEL_WARNING, "alert queue full");
       return;
     }
   }
-
-  if (queue_index == MAX_ALERTS) {
-    APP_LOG(APP_LOG_LEVEL_INFO, "woke for alert %u but the queue is full", (uint32_t)cookie);
-    return;
-  }
-
-  s_alert_queue[queue_index] = prv_get_alert((uint32_t)cookie);
+  APP_LOG(APP_LOG_LEVEL_WARNING, "unknown wakeup id %d", (int)id);
 }
 
 static bool prv_alert_init() {
   prv_begin_listening(&s_persist_backbuffer);
 
   if (!prv_persist_read(&s_persist)) {
-    // We can't display any alerts if we can't read them from disk.
+    wakeup_cancel_all();
     return false;
   }
 
-  memset(s_alert_queue, 0, sizeof(s_alert_queue));
+  memset(s_alert_queue, 0xFF, sizeof(s_alert_queue));  // ALERT_QUEUE_EMPTY
 
   WakeupId wakeup_id;
   int32_t cookie;
   if (wakeup_get_launch_event(&wakeup_id, &cookie)) {
-    const AlertData *alert = prv_get_alert((uint32_t)cookie);
-    if (alert == NULL) {
+    for (uint32_t i = 0; i < s_persist.header.settings.num_alerts; i++) {
+      if (s_persist.header.wakeup_ids[i] == wakeup_id) {
+        s_alert_queue[0] = i;
+        break;
+      }
+    }
+    if (s_alert_queue[0] == ALERT_QUEUE_EMPTY) {
+      APP_LOG(APP_LOG_LEVEL_ERROR, "wakeup ID not found in alert table");
       return false;
     }
-    s_alert_queue[0] = alert;
   } else {
     APP_LOG(APP_LOG_LEVEL_ERROR, "didn't wake but entered alert mode somehow");
     return false;
   }
 
   wakeup_service_subscribe(prv_wakeup_callback);
-
   return true;
 }
 
 static bool prv_refresh_init() {
-  if (!prv_persist_read_header(&s_persist_backbuffer)) {
-    memset(&s_persist_backbuffer, 0, sizeof(s_persist_backbuffer));
-    prv_persist_relocate(&s_persist_backbuffer, 1);
+  if (!prv_persist_read_header(&s_persist)) {
+    wakeup_cancel_all();
+    memset(&s_persist, 0, sizeof(s_persist));
+    prv_persist_relocate(&s_persist, 1);
   }
 
   if (!prv_begin_listening(&s_persist_backbuffer)) {
@@ -679,7 +721,8 @@ static bool prv_refresh_init() {
 }
 
 int main() {
-  s_persist_dirty = false;
+  s_backbuffer_dirty = false;
+  s_frontbuffer_dirty = false;
 
   switch (launch_reason()) {
     case APP_LAUNCH_PHONE:
@@ -688,16 +731,12 @@ int main() {
         prv_refresh_init_ui();
         app_event_loop();
         prv_refresh_deinit_ui();
-        if (s_persist_dirty) {
-          prv_persist_write(&s_persist_backbuffer);
-        }
       }
       break;
     case APP_LAUNCH_WAKEUP:
       s_app_mode = APP_MODE_ALERT;
       if (prv_alert_init()) {
-        while (s_alert_queue[0]) {
-          // TODO: wait for after animation?
+        while (s_alert_queue[0] != ALERT_QUEUE_EMPTY) {
           vibes_long_pulse();
           prv_alert_init_ui();
           app_event_loop();
@@ -705,18 +744,21 @@ int main() {
           for (uint32_t i = 1; i < MAX_ALERTS; i++) {
             s_alert_queue[i - 1] = s_alert_queue[i];
           }
-          s_alert_queue[MAX_ALERTS - 1] = NULL;
-        }
-        if (s_persist_dirty) {
-          memcpy(s_persist_backbuffer.header.dismissed, s_persist.header.dismissed,
-                 sizeof(s_persist.header.dismissed));
-          prv_persist_write(&s_persist_backbuffer);
+          s_alert_queue[MAX_ALERTS - 1] = ALERT_QUEUE_EMPTY;
         }
       }
       break;
     default:
       APP_LOG(APP_LOG_LEVEL_ERROR, "unsupported launch reason: %d", launch_reason());
       break;
+  }
+
+  if (s_backbuffer_dirty) {
+    prv_reconcile_wakeup_ids(&s_persist, &s_persist_backbuffer);
+    prv_persist_write(&s_persist_backbuffer);
+  } else if (s_frontbuffer_dirty) {
+    prv_reconcile_wakeup_ids(&s_persist, &s_persist);
+    prv_persist_write_header(&s_persist);
   }
 
   exit_reason_set(APP_EXIT_ACTION_PERFORMED_SUCCESSFULLY);

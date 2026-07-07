@@ -33,9 +33,10 @@ pair-android port code:
     adb pair {{phone}}:{{port}} {{code}}
 
 # Format all sources
-# TODO add clang-format, nixfmt
 format:
     fd -e kt . | xargs ktlint -F
+    fd -e c -e h . | xargs clang-format -i
+    fd -e nix . | xargs nixfmt
 
 # Clean all build files
 clean:

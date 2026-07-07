@@ -174,7 +174,10 @@ fun getDeviceCalendars(context: Context): List<CalendarInfo> {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(repository: SettingsRepository) {
+fun SettingsScreen(
+    repository: SettingsRepository,
+    onSyncRequest: () -> Unit,
+) {
     val initialSettings = remember(repository) { repository.appSettingsFlow.value }
     val appSettings by repository.appSettingsFlow.collectAsState(initial = initialSettings)
     val currentSettings = appSettings ?: return
@@ -234,6 +237,7 @@ fun SettingsScreen(repository: SettingsRepository) {
                 repository = repository,
                 openPermissionSettings = openPermissionSettings,
                 onNavigate = { navController.navigate(it) },
+                onSyncRequest = onSyncRequest,
             )
         }
         composable(
@@ -283,6 +287,7 @@ fun HomeScreen(
     repository: SettingsRepository,
     openPermissionSettings: () -> Unit,
     onNavigate: (String) -> Unit,
+    onSyncRequest: () -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -323,6 +328,33 @@ fun HomeScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(bottom = 24.dp),
         ) {
+            Spacer(modifier = Modifier.height(24.dp))
+            SettingsGroup {
+                val lastSyncedStr =
+                    if (settings.generalSettings.lastSynced != null) {
+                        val date = java.util.Date(settings.generalSettings.lastSynced)
+                        val format =
+                            android.text.format.DateFormat
+                                .getMediumDateFormat(context)
+                        val timeFormat =
+                            android.text.format.DateFormat
+                                .getTimeFormat(context)
+                        stringResource(
+                            R.string.sync_time,
+                            format.format(date),
+                            timeFormat.format(date),
+                        )
+                    } else {
+                        stringResource(R.string.sync_never)
+                    }
+                DependentValuePreference(
+                    title = stringResource(R.string.pref_sync_now),
+                    subtitle = lastSyncedStr,
+                    enabled = true,
+                    onClick = onSyncRequest,
+                )
+            }
+
             PreferenceCategory(title = stringResource(R.string.category_general))
             SettingsGroup {
                 DependentValuePreference(

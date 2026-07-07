@@ -23,9 +23,7 @@
 
         androidComposition = pkgs.androidenv.composeAndroidPackages {
           platformVersions = [
-            # TODO: Do we need both of these?
             "36"
-            "24"
           ];
           buildToolsVersions = [ "35.0.0" ];
         };
@@ -70,8 +68,7 @@
               )
             }:$LD_LIBRARY_PATH"
 
-            # TODO: make this respect XDG_DATA_HOME
-            if [ ! -d ~/.local/share/pebble-sdk/SDKs/current ]; then
+            if [ ! -d "''${XDG_DATA_HOME:-$HOME/.local/share}/pebble-sdk/SDKs/current" ]; then
               pebble sdk install latest
             fi
           '';

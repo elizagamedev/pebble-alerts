@@ -12,9 +12,6 @@ import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import sh.eliza.pebble.calnotify.ui.theme.AppTheme
 
@@ -34,25 +31,18 @@ class MainActivity : ComponentActivity() {
 
         splashScreen.setKeepOnScreenCondition { settingsRepository.appSettingsFlow.value == null }
 
-        lifecycleScope.launch {
-            settingsRepository.appSettingsFlow
-                .filterNotNull()
-                .distinctUntilChanged()
-                .collectLatest { settings ->
-                    val alerts = Alert.getUpcomingAlerts(this@MainActivity, settings)
-                    PebbleListenerService.withInhibitUpdates {
-                        if (pebbleManager.openAppOnWatch()) {
-                            pebbleManager.send(settings.generalSettings, alerts)
-                        }
-                    }
-                }
-        }
-
         enableEdgeToEdge()
         setContent {
             AppTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    SettingsScreen(repository = settingsRepository)
+                    SettingsScreen(
+                        repository = settingsRepository,
+                        onSyncRequest = {
+                            lifecycleScope.launch {
+                                onSyncRequest(settingsRepository)
+                            }
+                        },
+                    )
                 }
             }
         }
@@ -61,5 +51,18 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         pebbleManager.close()
         super.onDestroy()
+    }
+
+    private suspend fun onSyncRequest(settingsRepository: SettingsRepository) {
+        val settings = settingsRepository.appSettingsFlow.value ?: return
+        PebbleListenerService.withInhibitUpdates {
+            val alerts = Alert.getUpcomingAlerts(this@MainActivity, settings)
+            if (pebbleManager.openAppOnWatch()) {
+                pebbleManager.send(settings.generalSettings, alerts.asSequence())
+                settingsRepository.updateGeneralSettings {
+                    it.copy(lastSynced = System.currentTimeMillis())
+                }
+            }
+        }
     }
 }
