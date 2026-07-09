@@ -9,6 +9,11 @@
     <string name="sync_time">Last synced: %1$s %2$s</string>
     <string name="duration_off">Off</string>
     <string name="duration_when_event_starts">When event starts</string>
+    <string name="pref_vibe_pattern">Vibration pattern</string>
+    <string name="vibe_pattern_none">None</string>
+    <string name="vibe_pattern_short">Short pulse</string>
+    <string name="vibe_pattern_long">Long pulse</string>
+    <string name="vibe_pattern_double">Double pulse</string>
 
     <!-- Permissions Category -->
     <string name="category_permissions">Permissions</string>

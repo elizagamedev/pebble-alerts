@@ -14,7 +14,7 @@ import java.time.Instant
 import java.util.UUID
 
 private const val MSG_VERSION = 0u
-private const val MAX_ALERTS = 5
+private const val MAX_ALERTS = 6
 
 class PebbleManager(
     private val context: Context,
@@ -63,7 +63,7 @@ class PebbleManager(
                 putInt(settings.snoozeDuration.inWholeSeconds.toInt())
                 putInt(filteredAlerts.size)
                 putInt(stringHeap.size)
-                putInt(0) // reserved
+                putInt(settings.vibePattern.value)
 
                 filteredAlerts.forEach { alert ->
                     putInt(alert.id.toInt())
@@ -75,7 +75,7 @@ class PebbleManager(
                     putInt(strings.getValue(alert.title))
                     putInt(strings.getValue(alert.details))
                     putInt(strings.getValue(alert.location))
-                    putInt(0) // reserved
+                    putInt(0) // alarm_time
                 }
 
                 put(stringHeap)

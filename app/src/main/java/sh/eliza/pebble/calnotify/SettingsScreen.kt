@@ -50,6 +50,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -302,6 +304,7 @@ fun HomeScreen(
 
     val snoozeDuration = settings.generalSettings.snoozeDuration
     var showSnoozeDurationDialog by remember { mutableStateOf(false) }
+    var showVibePatternDialog by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
     DisposableEffect(lifecycleOwner) {
@@ -362,6 +365,13 @@ fun HomeScreen(
                     subtitle = formatDuration(context, snoozeDuration),
                     enabled = true,
                     onClick = { showSnoozeDurationDialog = true },
+                )
+
+                DependentValuePreference(
+                    title = stringResource(R.string.pref_vibe_pattern),
+                    subtitle = stringResource(settings.generalSettings.vibePattern.labelResId),
+                    enabled = true,
+                    onClick = { showVibePatternDialog = true },
                 )
             }
 
@@ -477,6 +487,21 @@ fun HomeScreen(
                 },
                 onDismiss = { showSnoozeDurationDialog = false },
                 optionLabel = { formatDuration(context, it) },
+            )
+        }
+
+        if (showVibePatternDialog) {
+            RadioGroupDialog(
+                title = stringResource(R.string.pref_vibe_pattern),
+                options = VibePattern.entries.toList(),
+                selectedOption = settings.generalSettings.vibePattern,
+                onOptionSelected = { pattern ->
+                    coroutineScope.launch {
+                        repository.updateGeneralSettings { it.copy(vibePattern = pattern) }
+                    }
+                },
+                onDismiss = { showVibePatternDialog = false },
+                optionLabel = { stringResource(it.labelResId) },
             )
         }
     }
@@ -750,7 +775,7 @@ fun <T> RadioGroupDialog(
     selectedOption: T,
     onOptionSelected: (T) -> Unit,
     onDismiss: () -> Unit,
-    optionLabel: (T) -> String,
+    optionLabel: @Composable (T) -> String,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -872,6 +897,9 @@ fun CalendarSettingsGroup(
                     listOf(
                         null,
                         0.minutes,
+                        1.minutes,
+                        2.minutes,
+                        3.minutes,
                         5.minutes,
                         10.minutes,
                         15.minutes,
@@ -879,8 +907,6 @@ fun CalendarSettingsGroup(
                         1.hours,
                         3.hours,
                         6.hours,
-                        12.hours,
-                        24.hours,
                     ),
                 selectedOption = settings.unremindedOffset,
                 onOptionSelected = { duration ->

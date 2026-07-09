@@ -1,6 +1,7 @@
 package sh.eliza.pebble.calnotify
 
 import android.content.Context
+import androidx.annotation.StringRes
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
@@ -63,12 +64,24 @@ enum class ContactEventType(
     ANNIVERSARY(R.string.contact_event_type_anniversary),
 }
 
+enum class VibePattern(
+    @StringRes val labelResId: Int,
+    val value: Int,
+) {
+    NONE(R.string.vibe_pattern_none, 0),
+    SHORT(R.string.vibe_pattern_short, 1),
+    LONG(R.string.vibe_pattern_long, 2),
+    DOUBLE(R.string.vibe_pattern_double, 3);
+}
+
 data class GeneralSettings(
     val snoozeDuration: Duration,
+    val vibePattern: VibePattern,
     val lastSynced: Long?,
 ) {
     fun updatePrefs(prefs: MutablePreferences) {
         prefs.writeDuration("general_snooze_duration", snoozeDuration)
+        prefs[stringPreferencesKey("general_vibe_pattern")] = vibePattern.name
         if (lastSynced != null) {
             prefs[longPreferencesKey("general_last_synced")] = lastSynced
         } else {
@@ -77,12 +90,24 @@ data class GeneralSettings(
     }
 
     companion object {
-        val DEFAULT = GeneralSettings(snoozeDuration = 10.minutes, lastSynced = null)
+        val DEFAULT = GeneralSettings(
+            snoozeDuration = 10.minutes,
+            vibePattern = VibePattern.LONG,
+            lastSynced = null
+        )
 
         fun createFromPrefs(prefs: Preferences): GeneralSettings =
             GeneralSettings(
                 snoozeDuration =
                     prefs.readDuration("general_snooze_duration", null) ?: DEFAULT.snoozeDuration,
+                vibePattern =
+                    prefs[stringPreferencesKey("general_vibe_pattern")]?.let {
+                        try {
+                            VibePattern.valueOf(it)
+                        } catch (e: IllegalArgumentException) {
+                            null
+                        }
+                    } ?: DEFAULT.vibePattern,
                 lastSynced = prefs[longPreferencesKey("general_last_synced")],
             )
     }
