@@ -111,8 +111,7 @@ static void prv_rearm_alarms(Persist *front, Persist *back) {
         AlertData *back_alarm = &back->header.alerts[b];
         if (back_alarm->id == front_alarm->id &&
             back_alarm->alert_time == front_alarm->alert_time) {
-          if (back_alarm->alarm_time == ALARM_DISMISSED ||
-              back_alarm->alarm_time < front_alarm->alarm_time) {
+          if (back_alarm->alarm_time < front_alarm->alarm_time) {
             back_alarm->alarm_time = front_alarm->alarm_time;
           }
           break;
@@ -685,7 +684,8 @@ static void prv_queue_alerts(time_t alarm_time) {
     if (i == head_value) {
       continue;
     }
-    if (s_persist.header.alerts[i].alarm_time <= alarm_time) {
+    if (s_persist.header.alerts[i].alarm_time != ALARM_DISMISSED &&
+        s_persist.header.alerts[i].alarm_time <= alarm_time) {
       // TODO: technically these will show up out of order.
       s_alert_queue[tail++] = i;
     }
