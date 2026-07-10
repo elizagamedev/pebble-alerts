@@ -71,7 +71,7 @@ enum class VibePattern(
     NONE(R.string.vibe_pattern_none, 0),
     SHORT(R.string.vibe_pattern_short, 1),
     LONG(R.string.vibe_pattern_long, 2),
-    DOUBLE(R.string.vibe_pattern_double, 3);
+    DOUBLE(R.string.vibe_pattern_double, 3),
 }
 
 data class GeneralSettings(
@@ -90,11 +90,12 @@ data class GeneralSettings(
     }
 
     companion object {
-        val DEFAULT = GeneralSettings(
-            snoozeDuration = 10.minutes,
-            vibePattern = VibePattern.LONG,
-            lastSynced = null
-        )
+        val DEFAULT =
+            GeneralSettings(
+                snoozeDuration = 10.minutes,
+                vibePattern = VibePattern.LONG,
+                lastSynced = null,
+            )
 
         fun createFromPrefs(prefs: Preferences): GeneralSettings =
             GeneralSettings(

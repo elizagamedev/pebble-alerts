@@ -88,7 +88,9 @@ class PebbleListenerService : BasePebbleListenerService() {
             return
         }
         val currentTransaction = transaction.get()
-        if (currentTransaction != null && (currentTransaction.watchId == null || currentTransaction.watchId == watch)) {
+        if (currentTransaction != null &&
+            (currentTransaction.watchId == null || currentTransaction.watchId == watch)
+        ) {
             transaction.compareAndExchange(currentTransaction, null)
             currentTransaction.onAppClosed.complete(Unit)
         }

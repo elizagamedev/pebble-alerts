@@ -35,11 +35,12 @@ class PebbleManager(
     ): T? =
         PebbleListenerService.withTransaction(watch) { onAppOpened, onAppClosed ->
             val result = sender.startAppOnTheWatch(APP_UUID, watch?.let { listOf(it) })
-            val willOpen = if (watch != null) {
-                result?.get(watch) == TransmissionResult.Success
-            } else {
-                result?.values?.any { it == TransmissionResult.Success } ?: false
-            }
+            val willOpen =
+                if (watch != null) {
+                    result?.get(watch) == TransmissionResult.Success
+                } else {
+                    result?.values?.any { it == TransmissionResult.Success } ?: false
+                }
             if (!willOpen) {
                 return@withTransaction null
             }
@@ -94,7 +95,7 @@ class PebbleManager(
                     putInt(strings.getValue(alert.title))
                     putInt(strings.getValue(alert.details))
                     putInt(strings.getValue(alert.location))
-                    putInt(if (alert.alertTime > now) alert.alertTime.epochSecond.toInt() else -1) // alarm_time
+                    putInt(if (alert.alertTime > now) alert.alertTime.epochSecond.toInt() else -1)
                 }
 
                 put(stringHeap)

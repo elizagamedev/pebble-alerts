@@ -73,9 +73,16 @@ typedef struct {
   TextLayer *start_time_layer;
   TextLayer *end_time_layer;
   TextLayer *location_layer;
+  Layer *info_container_layer;
+  ScrollLayer *details_scroll_layer;
   TextLayer *details_layer;
   Layer *content_layer;
   PropertyAnimation *prop_anim;
+  PropertyAnimation *details_anims[5];
+  GRect details_normal_frame;
+  GRect details_expanded_frame;
+  GRect details_text_normal_frame;
+  GRect details_text_expanded_frame;
   GColor bg_color;
   char start_time_buf[16];
   char end_time_buf[16];
@@ -83,6 +90,8 @@ typedef struct {
 
 static AlertUi s_alert_ui[2];
 static int s_current_alert_ui;
+static bool s_is_details_view;
+static PropertyAnimation *s_action_bar_anim;
 
 // Action bar elements
 static ActionBarLayer *s_action_bar;
@@ -131,9 +140,69 @@ static void prv_alert_tick_handler(struct tm *tick_time, TimeUnits units_changed
 static void prv_make_alert_ui(const AlertData *alert, AlertUi *ui);
 static void prv_destroy_alert_ui(const AlertUi *ui);
 
-static void prv_back_click_handler(ClickRecognizerRef recognizer, void *context) {
-  // TODO: animate a "nudge" to indicate this is not allowed?
-  vibes_double_pulse();
+static void prv_details_exit() {
+  s_is_details_view = false;
+
+  AlertUi *ui = &s_alert_ui[s_current_alert_ui];
+  GRect bounds = layer_get_bounds(window_get_root_layer(s_window));
+
+  // Action bar moves back.
+  GRect ab_end = layer_get_frame(action_bar_layer_get_layer(s_action_bar));
+  ab_end.origin.x = bounds.size.w - ACTION_BAR_WIDTH;
+  s_action_bar_anim = property_animation_create_layer_frame(
+      action_bar_layer_get_layer(s_action_bar), NULL, &ab_end);
+  animation_schedule((Animation *)s_action_bar_anim);
+
+  // Info container moves back.
+  GRect info_frame = layer_get_frame(ui->info_container_layer);
+  info_frame.origin.x = 0;
+  ui->details_anims[0] =
+      property_animation_create_layer_frame(ui->info_container_layer, NULL, &info_frame);
+  animation_schedule((Animation *)ui->details_anims[0]);
+
+  // Scroll layer restores.
+  GRect end_frame = ui->details_normal_frame;
+  ui->details_anims[1] = property_animation_create_layer_frame(
+      scroll_layer_get_layer(ui->details_scroll_layer), NULL, &end_frame);
+  animation_schedule((Animation *)ui->details_anims[1]);
+  scroll_layer_set_content_offset(ui->details_scroll_layer, GPointZero, true);
+
+  // Header layers restore.
+  GRect calendar_frame = layer_get_frame(text_layer_get_layer(ui->calendar_layer));
+  calendar_frame.size.w -= ACTION_BAR_WIDTH;
+  ui->details_anims[2] = property_animation_create_layer_frame(
+      text_layer_get_layer(ui->calendar_layer), NULL, &calendar_frame);
+  animation_schedule((Animation *)ui->details_anims[2]);
+
+  GRect time_frame = layer_get_frame(text_layer_get_layer(ui->time_layer));
+  time_frame.origin.x -= ACTION_BAR_WIDTH;
+  ui->details_anims[3] = property_animation_create_layer_frame(text_layer_get_layer(ui->time_layer),
+                                                               NULL, &time_frame);
+  animation_schedule((Animation *)ui->details_anims[3]);
+
+  // Text layer restores width.
+  GRect text_frame = ui->details_text_normal_frame;
+  ui->details_anims[4] = property_animation_create_layer_frame(
+      text_layer_get_layer(ui->details_layer), NULL, &text_frame);
+  animation_schedule((Animation *)ui->details_anims[4]);
+  scroll_layer_set_content_size(ui->details_scroll_layer, text_frame.size);
+}
+
+static void prv_details_scroll(ButtonId button, bool is_repeating) {
+  AlertUi *ui = &s_alert_ui[s_current_alert_ui];
+  GPoint offset = scroll_layer_get_content_offset(ui->details_scroll_layer);
+  switch (button) {
+    case BUTTON_ID_UP:
+      offset.y += 24 * 2;
+      break;
+    case BUTTON_ID_DOWN:
+      offset.y -= 24 * 2;
+      break;
+    default:
+      APP_LOG(APP_LOG_LEVEL_ERROR, "impossible scroll button!");
+      return;
+  }
+  scroll_layer_set_content_offset(ui->details_scroll_layer, offset, !is_repeating);
 }
 
 static void prv_next_alert() {
@@ -188,14 +257,40 @@ static void prv_next_alert() {
   }
 }
 
-static void prv_snooze_click_handler(ClickRecognizerRef recognizer, void *context) {
-  uint32_t idx = s_alert_queue[0];
-  if (idx == ALERT_QUEUE_EMPTY) {
-    APP_LOG(APP_LOG_LEVEL_ERROR, "attempted to snooze but no alerts in queue!");
-    window_stack_pop(true);
-    return;
-  }
+static void prv_alert_nudge() {
+  vibes_short_pulse();
 
+  GRect bounds = layer_get_bounds(window_get_root_layer(s_window));
+  GRect start_frame = layer_get_frame(action_bar_layer_get_layer(s_action_bar));
+  start_frame.origin.x = bounds.size.w - ACTION_BAR_WIDTH;
+
+  GRect mid_frame = start_frame;
+  mid_frame.origin.x += 8;
+
+  PropertyAnimation *anim1 = property_animation_create_layer_frame(
+      action_bar_layer_get_layer(s_action_bar), &start_frame, &mid_frame);
+  animation_set_duration((Animation *)anim1, 50);
+
+  PropertyAnimation *anim2 = property_animation_create_layer_frame(
+      action_bar_layer_get_layer(s_action_bar), &mid_frame, &start_frame);
+  animation_set_duration((Animation *)anim2, 50);
+
+  PropertyAnimation *anim3 = property_animation_create_layer_frame(
+      action_bar_layer_get_layer(s_action_bar), &start_frame, &mid_frame);
+  animation_set_duration((Animation *)anim3, 50);
+
+  PropertyAnimation *anim4 = property_animation_create_layer_frame(
+      action_bar_layer_get_layer(s_action_bar), &mid_frame, &start_frame);
+  animation_set_duration((Animation *)anim4, 50);
+
+  Animation *seq = animation_sequence_create((Animation *)anim1, (Animation *)anim2,
+                                             (Animation *)anim3, (Animation *)anim4, NULL);
+  animation_set_curve(seq, AnimationCurveLinear);
+  animation_schedule(seq);
+}
+
+static void prv_alert_snooze() {
+  uint32_t idx = s_alert_queue[0];
   AlertData *alert = &s_persist.header.alerts[idx];
   time_t alarm_time = time(NULL) + s_persist.header.settings.snooze_duration;
 
@@ -217,27 +312,111 @@ static void prv_snooze_click_handler(ClickRecognizerRef recognizer, void *contex
   prv_next_alert();
 }
 
-static void prv_dismiss_click_handler(ClickRecognizerRef recognizer, void *context) {
-  uint32_t idx = s_alert_queue[0];
-  if (idx == ALERT_QUEUE_EMPTY) {
-    APP_LOG(APP_LOG_LEVEL_ERROR, "attempted to dismiss but no alerts in queue!");
-  } else {
-    s_persist.header.alerts[idx].alarm_time = ALARM_DISMISSED;
-    s_frontbuffer_dirty = true;
-  }
+static void prv_alert_dismiss() {
+  s_persist.header.alerts[s_alert_queue[0]].alarm_time = ALARM_DISMISSED;
+  s_frontbuffer_dirty = true;
   prv_next_alert();
 }
 
-static void prv_read_more_click_handler(ClickRecognizerRef recognizer, void *context) {
-  // TODO: create a new details window and push it onto the stack. The details window show the title
-  // and details unabridged and allow scrolling.
+static void prv_alert_enter_details() {
+  AlertUi *ui = &s_alert_ui[s_current_alert_ui];
+
+  if (ui->details_layer == NULL) {
+    return;
+  }
+
+  s_is_details_view = true;
+
+  GRect bounds = layer_get_bounds(window_get_root_layer(s_window));
+
+  // Action bar moves right
+  GRect ab_start = layer_get_frame(action_bar_layer_get_layer(s_action_bar));
+  GRect ab_end = ab_start;
+  ab_end.origin.x = bounds.size.w;
+  s_action_bar_anim = property_animation_create_layer_frame(
+      action_bar_layer_get_layer(s_action_bar), NULL, &ab_end);
+  animation_schedule((Animation *)s_action_bar_anim);
+
+  // Info container moves left
+  GRect info_frame = layer_get_frame(ui->info_container_layer);
+  info_frame.origin.x = -bounds.size.w;
+  ui->details_anims[0] =
+      property_animation_create_layer_frame(ui->info_container_layer, NULL, &info_frame);
+  animation_schedule((Animation *)ui->details_anims[0]);
+
+  // Scroll layer expands
+  GRect end_frame = ui->details_expanded_frame;
+  ui->details_anims[1] = property_animation_create_layer_frame(
+      scroll_layer_get_layer(ui->details_scroll_layer), NULL, &end_frame);
+  animation_schedule((Animation *)ui->details_anims[1]);
+
+  // Header layers expand
+  GRect calendar_frame = layer_get_frame(text_layer_get_layer(ui->calendar_layer));
+  calendar_frame.size.w += ACTION_BAR_WIDTH;
+  ui->details_anims[2] = property_animation_create_layer_frame(
+      text_layer_get_layer(ui->calendar_layer), NULL, &calendar_frame);
+  animation_schedule((Animation *)ui->details_anims[2]);
+
+  GRect time_frame = layer_get_frame(text_layer_get_layer(ui->time_layer));
+  time_frame.origin.x += ACTION_BAR_WIDTH;
+  ui->details_anims[3] = property_animation_create_layer_frame(text_layer_get_layer(ui->time_layer),
+                                                               NULL, &time_frame);
+  animation_schedule((Animation *)ui->details_anims[3]);
+
+  // Text layer expands width
+  GRect text_frame = ui->details_text_expanded_frame;
+  ui->details_anims[4] = property_animation_create_layer_frame(
+      text_layer_get_layer(ui->details_layer), NULL, &text_frame);
+  animation_schedule((Animation *)ui->details_anims[4]);
+  scroll_layer_set_content_size(ui->details_scroll_layer, text_frame.size);
+}
+
+static void prv_click_handler(ClickRecognizerRef recognizer, void *context) {
+  if (s_alert_queue[0] == ALERT_QUEUE_EMPTY) {
+    return;
+  }
+  ButtonId button = click_recognizer_get_button_id(recognizer);
+  bool is_repeating = click_recognizer_is_repeating(recognizer);
+  if (s_is_details_view) {
+    switch (button) {
+      case BUTTON_ID_UP:
+      case BUTTON_ID_DOWN:
+        prv_details_scroll(button, is_repeating);
+        break;
+      case BUTTON_ID_BACK:
+      case BUTTON_ID_SELECT:
+        if (!is_repeating) {
+          prv_details_exit();
+        }
+        break;
+      default:
+        break;
+    }
+  } else if (!is_repeating) {
+    switch (button) {
+      case BUTTON_ID_UP:
+        prv_alert_snooze();
+        break;
+      case BUTTON_ID_DOWN:
+        prv_alert_dismiss();
+        break;
+      case BUTTON_ID_BACK:
+        prv_alert_nudge();
+        break;
+      case BUTTON_ID_SELECT:
+        prv_alert_enter_details();
+        break;
+      default:
+        break;
+    }
+  }
 }
 
 static void prv_click_provider(void *context) {
-  window_single_click_subscribe(BUTTON_ID_BACK, prv_back_click_handler);
-  window_single_click_subscribe(BUTTON_ID_UP, prv_snooze_click_handler);
-  window_single_click_subscribe(BUTTON_ID_SELECT, prv_read_more_click_handler);
-  window_single_click_subscribe(BUTTON_ID_DOWN, prv_dismiss_click_handler);
+  window_single_repeating_click_subscribe(BUTTON_ID_UP, 30, prv_click_handler);
+  window_single_repeating_click_subscribe(BUTTON_ID_DOWN, 30, prv_click_handler);
+  window_single_click_subscribe(BUTTON_ID_BACK, prv_click_handler);
+  window_single_click_subscribe(BUTTON_ID_SELECT, prv_click_handler);
 }
 
 // ---------------------------------------------------------------------------
@@ -246,7 +425,7 @@ static void prv_click_provider(void *context) {
 
 #define H_MARGIN 10
 #define H_MARGIN_TIME 30
-#define V_MARGIN 6
+#define V_MARGIN 4
 #define HEADER_FONT FONT_KEY_GOTHIC_18
 
 static void prv_content_layer_update_proc(Layer *layer, GContext *ctx) {
@@ -271,15 +450,16 @@ static void prv_make_alert_ui(const AlertData *alert, AlertUi *ui) {
   int16_t text_width = width - 2 * H_MARGIN;
 
   ui->content_layer = layer_create(bounds);
+  ui->info_container_layer = layer_create(bounds);
   layer_set_update_proc(ui->content_layer, prv_content_layer_update_proc);
   layer_insert_below_sibling(ui->content_layer, action_bar_layer_get_layer(s_action_bar));
+  layer_add_child(ui->content_layer, ui->info_container_layer);
 
   prv_format_time(ui->start_time_buf, sizeof(ui->start_time_buf), alert->start_time);
   prv_format_time(ui->end_time_buf, sizeof(ui->end_time_buf), alert->end_time);
 
   // Calendar name
-  GRect layer_bounds =
-      GRect(H_MARGIN, V_MARGIN, text_width - s_time_width, 18 + 2);  // +2 for descenders
+  GRect layer_bounds = GRect(H_MARGIN, 0, text_width - s_time_width, STATUS_BAR_LAYER_HEIGHT);
   ui->calendar_layer = text_layer_create(layer_bounds);
   text_layer_set_text(ui->calendar_layer, prv_get_string(alert->calendar));
   text_layer_set_font(ui->calendar_layer, fonts_get_system_font(HEADER_FONT));
@@ -304,7 +484,6 @@ static void prv_make_alert_ui(const AlertData *alert, AlertUi *ui) {
   layer_bounds.origin.x = H_MARGIN;
   layer_bounds.origin.y += layer_bounds.size.h;
   layer_bounds.size.w = text_width;
-  // TODO: see TODO below for note on magic constant here
   layer_bounds.size.h = 28 * 2 + 4;
   ui->title_layer = text_layer_create(layer_bounds);
   text_layer_set_text(ui->title_layer, prv_get_string(alert->title));
@@ -312,7 +491,7 @@ static void prv_make_alert_ui(const AlertData *alert, AlertUi *ui) {
   text_layer_set_text_color(ui->title_layer, fg_color);
   text_layer_set_background_color(ui->title_layer, GColorClear);
   text_layer_set_overflow_mode(ui->title_layer, GTextOverflowModeTrailingEllipsis);
-  layer_add_child(ui->content_layer, text_layer_get_layer(ui->title_layer));
+  layer_add_child(ui->info_container_layer, text_layer_get_layer(ui->title_layer));
 
   // Start time
   layer_bounds.origin.y += text_layer_get_content_size(ui->title_layer).h + 4;
@@ -325,7 +504,7 @@ static void prv_make_alert_ui(const AlertData *alert, AlertUi *ui) {
   text_layer_set_text(ui->start_time_layer, ui->start_time_buf);
   text_layer_set_text_color(ui->start_time_layer, fg_color);
   text_layer_set_background_color(ui->start_time_layer, GColorClear);
-  layer_add_child(ui->content_layer, text_layer_get_layer(ui->start_time_layer));
+  layer_add_child(ui->info_container_layer, text_layer_get_layer(ui->start_time_layer));
 
   // End time
   layer_bounds.origin.y += layer_bounds.size.h;
@@ -336,7 +515,7 @@ static void prv_make_alert_ui(const AlertData *alert, AlertUi *ui) {
   text_layer_set_text_color(ui->end_time_layer, fg_color);
   text_layer_set_background_color(ui->end_time_layer, GColorClear);
   text_layer_set_text_alignment(ui->end_time_layer, GTextAlignmentRight);
-  layer_add_child(ui->content_layer, text_layer_get_layer(ui->end_time_layer));
+  layer_add_child(ui->info_container_layer, text_layer_get_layer(ui->end_time_layer));
 
   layer_bounds.origin.x = H_MARGIN;
   layer_bounds.size.w = text_width;
@@ -353,7 +532,7 @@ static void prv_make_alert_ui(const AlertData *alert, AlertUi *ui) {
     text_layer_set_background_color(ui->location_layer, GColorClear);
     text_layer_set_overflow_mode(ui->location_layer, GTextOverflowModeTrailingEllipsis);
     text_layer_set_text_alignment(ui->location_layer, GTextAlignmentCenter);
-    layer_add_child(ui->content_layer, text_layer_get_layer(ui->location_layer));
+    layer_add_child(ui->info_container_layer, text_layer_get_layer(ui->location_layer));
   } else {
     ui->location_layer = NULL;
   }
@@ -361,16 +540,42 @@ static void prv_make_alert_ui(const AlertData *alert, AlertUi *ui) {
   // Details
   const char *details_str = prv_get_string(alert->details);
   if (*details_str) {
+    action_bar_layer_set_icon(s_action_bar, BUTTON_ID_SELECT, s_icon_read_more);
     layer_bounds.origin.y += layer_bounds.size.h;
-    layer_bounds.size.h = bounds.size.h - layer_bounds.origin.y - V_MARGIN;
-    ui->details_layer = text_layer_create(layer_bounds);
+
+    ui->details_normal_frame =
+        GRect(0, layer_bounds.origin.y, bounds.size.w, bounds.size.h - layer_bounds.origin.y);
+    ui->details_expanded_frame =
+        GRect(0, STATUS_BAR_LAYER_HEIGHT, bounds.size.w, bounds.size.h - STATUS_BAR_LAYER_HEIGHT);
+
+    ui->details_text_normal_frame =
+        GRect(H_MARGIN, V_MARGIN, text_width, ui->details_normal_frame.size.h - V_MARGIN);
+
+    GRect content_bounds = GRect(H_MARGIN, V_MARGIN, bounds.size.w - H_MARGIN * 2, 2000);
+    GSize content_size = graphics_text_layout_get_content_size(
+        details_str, fonts_get_system_font(FONT_KEY_GOTHIC_24), content_bounds,
+        GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft);
+    content_bounds.size.h = content_size.h + V_MARGIN * 2;
+    if (content_bounds.size.h < ui->details_expanded_frame.size.h) {
+      content_bounds.size.h = ui->details_expanded_frame.size.h;
+    }
+    ui->details_text_expanded_frame = content_bounds;
+
+    ui->details_scroll_layer = scroll_layer_create(ui->details_normal_frame);
+    layer_add_child(ui->content_layer, scroll_layer_get_layer(ui->details_scroll_layer));
+
+    ui->details_layer = text_layer_create(ui->details_text_normal_frame);
     text_layer_set_text(ui->details_layer, details_str);
     text_layer_set_font(ui->details_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24));
     text_layer_set_text_color(ui->details_layer, fg_color);
     text_layer_set_background_color(ui->details_layer, GColorClear);
     text_layer_set_overflow_mode(ui->details_layer, GTextOverflowModeTrailingEllipsis);
-    layer_add_child(ui->content_layer, text_layer_get_layer(ui->details_layer));
+
+    scroll_layer_set_content_size(ui->details_scroll_layer, ui->details_text_normal_frame.size);
+    scroll_layer_add_child(ui->details_scroll_layer, text_layer_get_layer(ui->details_layer));
   } else {
+    action_bar_layer_clear_icon(s_action_bar, BUTTON_ID_SELECT);
+    ui->details_scroll_layer = NULL;
     ui->details_layer = NULL;
   }
 }
@@ -382,8 +587,16 @@ static void prv_destroy_alert_ui(const AlertUi *ui) {
   text_layer_destroy(ui->start_time_layer);
   text_layer_destroy(ui->end_time_layer);
   text_layer_destroy(ui->location_layer);
+  layer_destroy(ui->info_container_layer);
+  scroll_layer_destroy(ui->details_scroll_layer);
   text_layer_destroy(ui->details_layer);
   layer_destroy(ui->content_layer);
+  for (int i = 0; i < 5; i++) {
+    if (ui->details_anims[i]) {
+      animation_unschedule(property_animation_get_animation(ui->details_anims[i]));
+      property_animation_destroy(ui->details_anims[i]);
+    }
+  }
   if (ui->prop_anim) {
     animation_unschedule(property_animation_get_animation(ui->prop_anim));
     property_animation_destroy(ui->prop_anim);
@@ -402,12 +615,13 @@ static void prv_alert_window_load(Window *window) {
 
   s_current_alert_ui = 0;
   memset(s_alert_ui, 0, sizeof(s_alert_ui));
+  s_is_details_view = false;
+  s_action_bar_anim = NULL;
 
   // Action bar.
   s_action_bar = action_bar_layer_create();
   action_bar_layer_set_background_color(s_action_bar, GColorBlack);
   action_bar_layer_set_icon(s_action_bar, BUTTON_ID_UP, s_icon_snooze);
-  action_bar_layer_set_icon(s_action_bar, BUTTON_ID_SELECT, s_icon_read_more);
   action_bar_layer_set_icon(s_action_bar, BUTTON_ID_DOWN, s_icon_dismiss);
   action_bar_layer_set_click_config_provider(s_action_bar, prv_click_provider);
   action_bar_layer_add_to_window(s_action_bar, window);
@@ -741,7 +955,6 @@ static void prv_queue_alerts(time_t alarm_time) {
     }
     if (s_persist.header.alerts[i].alarm_time != ALARM_DISMISSED &&
         s_persist.header.alerts[i].alarm_time <= alarm_time) {
-      // TODO: technically these will show up out of order.
       s_alert_queue[tail++] = i;
     }
   }
