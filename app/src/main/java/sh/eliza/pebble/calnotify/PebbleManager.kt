@@ -6,6 +6,7 @@ import io.rebble.pebblekit2.client.PebbleSender
 import io.rebble.pebblekit2.common.model.PebbleDictionaryItem
 import io.rebble.pebblekit2.common.model.TransmissionResult
 import io.rebble.pebblekit2.common.model.WatchIdentifier
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -19,7 +20,7 @@ private const val MAX_ALERTS = 6
 class PebbleManager(
     private val context: Context,
 ) : AutoCloseable {
-    private val sender: PebbleSender = DefaultPebbleSender(context)
+    val sender: PebbleSender = DefaultPebbleSender(context)
 
     override fun close() {
         // No-op: The underlying service connection is bound to the applicationContext
@@ -28,10 +29,28 @@ class PebbleManager(
         // caused by the SDK's internal unbind lifecycle (e.g., onBindingDied).
     }
 
-    suspend fun openAppOnWatch(watch: WatchIdentifier? = null): Boolean {
-        val result = sender.startAppOnTheWatch(APP_UUID, watch?.let { listOf(it) })
-        return result?.values?.any { it == TransmissionResult.Success } == true
-    }
+    suspend inline fun <T> withOpenAppOnWatch(
+        watch: WatchIdentifier? = null,
+        crossinline body: suspend () -> T,
+    ): T? =
+        PebbleListenerService.withTransaction(watch) { onAppOpened, onAppClosed ->
+            val result = sender.startAppOnTheWatch(APP_UUID, watch?.let { listOf(it) })
+            val willOpen = if (watch != null) {
+                result?.get(watch) == TransmissionResult.Success
+            } else {
+                result?.values?.any { it == TransmissionResult.Success } ?: false
+            }
+            if (!willOpen) {
+                return@withTransaction null
+            }
+
+            withTimeoutOrNull(2000) {
+                onAppOpened.await()
+                val result = body()
+                onAppClosed.await()
+                result
+            }
+        }
 
     suspend fun send(
         settings: GeneralSettings,
@@ -75,7 +94,7 @@ class PebbleManager(
                     putInt(strings.getValue(alert.title))
                     putInt(strings.getValue(alert.details))
                     putInt(strings.getValue(alert.location))
-                    putInt(0) // alarm_time
+                    putInt(if (alert.alertTime > now) alert.alertTime.epochSecond.toInt() else -1) // alarm_time
                 }
 
                 put(stringHeap)

@@ -94,6 +94,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import kotlinx.coroutines.launch
+import sh.eliza.pebble.calnotify.BuildConfig
 import sh.eliza.pebble.calnotify.PebbleColor.Companion.PEBBLE_COLORS
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -179,6 +180,7 @@ fun getDeviceCalendars(context: Context): List<CalendarInfo> {
 fun SettingsScreen(
     repository: SettingsRepository,
     onSyncRequest: () -> Unit,
+    onSyncTestDataRequest: () -> Unit,
 ) {
     val initialSettings = remember(repository) { repository.appSettingsFlow.value }
     val appSettings by repository.appSettingsFlow.collectAsState(initial = initialSettings)
@@ -240,6 +242,7 @@ fun SettingsScreen(
                 openPermissionSettings = openPermissionSettings,
                 onNavigate = { navController.navigate(it) },
                 onSyncRequest = onSyncRequest,
+                onSyncTestDataRequest = onSyncTestDataRequest,
             )
         }
         composable(
@@ -290,6 +293,7 @@ fun HomeScreen(
     openPermissionSettings: () -> Unit,
     onNavigate: (String) -> Unit,
     onSyncRequest: () -> Unit,
+    onSyncTestDataRequest: () -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -356,6 +360,14 @@ fun HomeScreen(
                     enabled = true,
                     onClick = onSyncRequest,
                 )
+                if (BuildConfig.DEBUG) {
+                    DependentValuePreference(
+                        title = "Sync test data",
+                        subtitle = "Send dummy alerts for testing",
+                        enabled = true,
+                        onClick = onSyncTestDataRequest,
+                    )
+                }
             }
 
             PreferenceCategory(title = stringResource(R.string.category_general))
