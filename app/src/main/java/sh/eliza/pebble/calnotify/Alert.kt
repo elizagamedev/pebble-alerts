@@ -56,6 +56,7 @@ typealias OnContactEvent<T> = (
     dayOfDetails: String,
     dayBeforeDetails: String,
     startTime: Instant,
+    subtitle: String?,
 ) -> Sequence<T>
 
 data class Alert(
@@ -465,7 +466,9 @@ private fun <T> visitUpcomingContactEventsInternal(
                         } ?: continue
 
                     val config = contactSettings[type]
-                    if (config == null || (!config.dayOf && !config.dayBefore)) {
+                    if (config == null ||
+                        (!config.dayOf && !config.dayBefore && !config.timelinePins)
+                    ) {
                         continue
                     }
 
@@ -576,6 +579,22 @@ private fun <T> visitUpcomingContactEventsInternal(
                             }
                         }
 
+                    val subtitle = years?.let {
+                        if (type == ContactEventType.BIRTHDAY) {
+                            context.resources.getQuantityString(
+                                R.plurals.timeline_subtitle_birthday_years,
+                                it,
+                                it
+                            )
+                        } else {
+                            context.resources.getQuantityString(
+                                R.plurals.timeline_subtitle_anniversary_years,
+                                it,
+                                it
+                            )
+                        }
+                    }
+
                     yieldAll(
                         onContactEvent(
                             config,
@@ -585,6 +604,7 @@ private fun <T> visitUpcomingContactEventsInternal(
                             dayOfDetails,
                             dayBeforeDetails,
                             nextOccurrence.atStartOfDay(zone).toInstant(),
+                            subtitle,
                         ),
                     )
                 }
@@ -599,6 +619,7 @@ private fun createFromContactInstance(
     dayOfDetails: String,
     dayBeforeDetails: String,
     startTime: Instant,
+    subtitle: String?,
 ): Sequence<Alert> =
     sequence {
         val commonEndTime = startTime.plus(1, ChronoUnit.DAYS)

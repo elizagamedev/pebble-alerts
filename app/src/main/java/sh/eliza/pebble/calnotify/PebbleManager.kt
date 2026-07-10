@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.UUID
+import kotlin.time.Duration.Companion.hours
 
 private const val MSG_VERSION = 0u
 private const val MAX_ALERTS = 6
@@ -167,6 +168,7 @@ private suspend fun syncContactTimelinePins(
                 dayOfDetails,
                 _,
                 startTime,
+                subtitle,
                 ->
                 if (startTime <= maxPinTime && startTime >= minPinTime) {
                     val pinId = "contact-$id"
@@ -178,11 +180,12 @@ private suspend fun syncContactTimelinePins(
                                     kotlin.time.Instant.fromEpochMilliseconds(
                                         startTime.toEpochMilli(),
                                     ),
-                                duration = null,
+                                duration = 24.hours,
                                 layout =
                                     TimelineLayout(
-                                        type = TimelineLayoutType.CALENDAR_PIN,
+                                        type = TimelineLayoutType.GENERIC_PIN,
                                         title = title,
+                                        subtitle = subtitle,
                                         body = dayOfDetails.takeIf { it.isNotBlank() },
                                         tinyIcon = "system://images/BIRTHDAY_EVENT",
                                         largeIcon = "system://images/BIRTHDAY_EVENT",

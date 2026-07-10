@@ -18,6 +18,12 @@
 #define ALERT_IS_ALL_DAY(flags) (((flags) & 0x80000000) != 0)
 
 typedef enum {
+  LANG_ENGLISH,
+  LANG_JAPANESE,
+  NUM_LANGS,
+} Language;
+
+typedef enum {
   APP_MODE_REFRESH,
   APP_MODE_ALERT,
 } AppMode;
@@ -59,6 +65,7 @@ typedef struct {
   char string_heap[4096];
 } Persist;
 
+static Language s_language;
 static AppMode s_app_mode;
 static bool s_backbuffer_dirty;
 static bool s_frontbuffer_dirty;
@@ -105,6 +112,23 @@ static GBitmap *s_icon_read_more;
 static uint32_t s_alert_queue[MAX_ALERTS];
 static char s_time_buf[16];
 static int16_t s_time_width;
+
+typedef enum { STR_CONNECTING, STR_DONE, STR_PARSE_ERROR, NUM_STRINGS } StringId;
+
+static const char *const s_strings[NUM_LANGS][NUM_STRINGS] = {
+    [LANG_ENGLISH] =
+        {
+            [STR_CONNECTING] = "Connecting to companion app...",
+            [STR_DONE] = "Synced!",
+            [STR_PARSE_ERROR] = "Could not understand companion app.",
+        },
+    [LANG_JAPANESE] =
+        {
+            [STR_CONNECTING] = "コンパニオンアプリに接続中…",
+            [STR_DONE] = "読み取り完了！",
+            [STR_PARSE_ERROR] = "コンパニオンアプリからの読み込み失敗",
+        },
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -670,19 +694,28 @@ static void prv_deinit_ui(void) {
 // ---------------------------------------------------------------------------
 
 static TextLayer *s_refresh_text_layer;
+static AppTimer *s_done_timer;
+
+static void prv_done_timer_callback(void *data) {
+  s_done_timer = NULL;
+  window_stack_pop(true);
+}
 
 static void prv_refresh_window_load(Window *window) {
   Layer *root = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(root);
 
-  s_refresh_text_layer = text_layer_create(GRect(0, (bounds.size.h - 32) / 2, bounds.size.w, 32));
-  text_layer_set_text(s_refresh_text_layer, "Refreshing...");
+  s_refresh_text_layer = text_layer_create(GRect(0, (bounds.size.h - 64) / 2, bounds.size.w, 64));
+  text_layer_set_text(s_refresh_text_layer, s_strings[s_language][STR_CONNECTING]);
   text_layer_set_font(s_refresh_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
   text_layer_set_text_alignment(s_refresh_text_layer, GTextAlignmentCenter);
   layer_add_child(root, text_layer_get_layer(s_refresh_text_layer));
 }
 
 static void prv_refresh_window_unload(Window *window) {
+  if (s_done_timer) {
+    app_timer_cancel(s_done_timer);
+  }
   text_layer_destroy(s_refresh_text_layer);
 }
 
@@ -866,36 +899,36 @@ static void prv_persist_write(Persist *persist) {
 // AppMessage inbox
 // ---------------------------------------------------------------------------
 
-static void prv_parse_message(DictionaryIterator *iter, Persist *persist) {
+static bool prv_parse_message(DictionaryIterator *iter, Persist *persist) {
   {
     Tuple *version_tuple = dict_find(iter, MESSAGE_KEY_VERSION);
     if (!version_tuple) {
       APP_LOG(APP_LOG_LEVEL_WARNING, "invalid message format");
-      return;
+      return false;
     }
     uint32_t version = version_tuple->value->uint32;
     if (version != MESSAGE_VERSION) {
       APP_LOG(APP_LOG_LEVEL_WARNING, "message version too new: %u", version);
-      return;
+      return false;
     }
   }
 
   Tuple *payload_tuple = dict_find(iter, MESSAGE_KEY_HEADER);
   if (!payload_tuple) {
     APP_LOG(APP_LOG_LEVEL_WARNING, "message payload missing");
-    return;
+    return false;
   }
   const uint8_t *payload = payload_tuple->value->data;
 
   memcpy(&persist->header.settings, &payload[0], sizeof(Settings));
   if (persist->header.settings.num_alerts > MAX_ALERTS) {
     APP_LOG(APP_LOG_LEVEL_WARNING, "too many alerts: %u", persist->header.settings.num_alerts);
-    return;
+    return false;
   }
   if (persist->header.settings.string_heap_size > sizeof(persist->string_heap)) {
     APP_LOG(APP_LOG_LEVEL_WARNING, "string heap too big: %u",
             persist->header.settings.string_heap_size);
-    return;
+    return false;
   }
 
   const uint32_t payloads_size = sizeof(AlertData) * persist->header.settings.num_alerts;
@@ -916,17 +949,22 @@ static void prv_parse_message(DictionaryIterator *iter, Persist *persist) {
   }
 
   s_backbuffer_dirty = true;
+  return true;
 }
 
 static void prv_inbox_received_callback(DictionaryIterator *iter, void *context) {
   APP_LOG(APP_LOG_LEVEL_INFO, "inbox_received_callback: parsing message");
-  prv_parse_message(iter, (Persist *)context);
+  bool parsed = prv_parse_message(iter, (Persist *)context);
   APP_LOG(APP_LOG_LEVEL_INFO, "inbox_received_callback: parsed message, backbuffer_dirty = %d",
           s_backbuffer_dirty);
   switch (s_app_mode) {
     case APP_MODE_REFRESH:
-      APP_LOG(APP_LOG_LEVEL_INFO, "inbox_received_callback: popping window");
-      window_stack_pop(true);
+      if (parsed) {
+        text_layer_set_text(s_refresh_text_layer, s_strings[s_language][STR_DONE]);
+        s_done_timer = app_timer_register(1000, prv_done_timer_callback, NULL);
+      } else {
+        text_layer_set_text(s_refresh_text_layer, s_strings[s_language][STR_PARSE_ERROR]);
+      }
       break;
     case APP_MODE_ALERT:
       APP_LOG(APP_LOG_LEVEL_INFO, "inbox_received_callback: ignoring in alert mode");
@@ -1001,19 +1039,21 @@ static bool prv_alert_init() {
     return false;
   }
 
-  switch (s_persist.header.settings.vibe_pattern) {
-    case VIBE_PATTERN_NONE:
-    default:
-      break;
-    case VIBE_PATTERN_SHORT:
-      vibes_short_pulse();
-      break;
-    case VIBE_PATTERN_LONG:
-      vibes_long_pulse();
-      break;
-    case VIBE_PATTERN_DOUBLE:
-      vibes_double_pulse();
-      break;
+  if (!quiet_time_is_active()) {
+    switch (s_persist.header.settings.vibe_pattern) {
+      case VIBE_PATTERN_NONE:
+      default:
+        break;
+      case VIBE_PATTERN_SHORT:
+        vibes_short_pulse();
+        break;
+      case VIBE_PATTERN_LONG:
+        vibes_long_pulse();
+        break;
+      case VIBE_PATTERN_DOUBLE:
+        vibes_double_pulse();
+        break;
+    }
   }
 
   return true;
@@ -1043,6 +1083,14 @@ int main() {
   s_backbuffer_dirty = false;
   s_frontbuffer_dirty = false;
   exit_reason_set(APP_EXIT_ACTION_PERFORMED_SUCCESSFULLY);
+
+  const char *locale = setlocale(LC_ALL, "");
+  APP_LOG(APP_LOG_LEVEL_INFO, "locale: %s", locale);
+  if (!strncmp("ja", locale, 2)) {
+    s_language = LANG_JAPANESE;
+  } else {
+    s_language = LANG_ENGLISH;
+  }
 
   switch (launch_reason()) {
     case APP_LAUNCH_PHONE:

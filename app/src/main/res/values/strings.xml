@@ -91,4 +91,14 @@
         <item quantity="one">Tomorrow, on %1$s, it will be %2$d year!</item>
         <item quantity="other">Tomorrow, on %1$s, it will be %2$d years!</item>
     </plurals>
+
+    <plurals name="timeline_subtitle_birthday_years">
+        <item quantity="one">%1$d year old</item>
+        <item quantity="other">%1$d years old</item>
+    </plurals>
+
+    <plurals name="timeline_subtitle_anniversary_years">
+        <item quantity="one">%1$d year</item>
+        <item quantity="other">%1$d years</item>
+    </plurals>
 </resources>
