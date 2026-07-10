@@ -68,17 +68,7 @@ class PebbleManager(
         syncContactTimelinePins(context, settings.contactSettings, now, sender)
 
         // Convert all strings into a heap.
-        val (stringHeap, strings) =
-            makeStringHeap(
-                mutableSetOf<String>().apply {
-                    filteredAlerts.forEach {
-                        add(it.calendarName)
-                        add(it.title)
-                        add(it.details)
-                        add(it.location)
-                    }
-                },
-            )
+        val (stringHeap, strings) = makeStringHeap(filteredAlerts)
 
         val payloadLength = (4 + filteredAlerts.size * 10) * 4 + stringHeap.size
 
@@ -103,10 +93,10 @@ class PebbleManager(
                         (alert.color.toInt() and 0x3F) or
                             (if (alert.allDay) 0x80000000.toInt() else 0)
                     putInt(flags)
-                    putInt(strings.getValue(alert.calendarName))
-                    putInt(strings.getValue(alert.title))
-                    putInt(strings.getValue(alert.details))
-                    putInt(strings.getValue(alert.location))
+                    putInt(strings[alert.calendarName] ?: 0)
+                    putInt(strings[alert.title] ?: 0)
+                    putInt(strings[alert.details] ?: 0)
+                    putInt(strings[alert.location] ?: 0)
                     putInt(if (alert.alertTime > now) alert.alertTime.epochSecond.toInt() else -1)
                 }
 
@@ -124,15 +114,31 @@ class PebbleManager(
         sender.sendDataToPebble(APP_UUID, dict, watch?.let { listOf(it) })
     }
 
-    fun makeStringHeap(strings: Set<String>): Pair<ByteArray, Map<String, Int>> {
+    fun makeStringHeap(alerts: List<Alert>): Pair<ByteArray, Map<String, Int>> {
         val outputStream = ByteArrayOutputStream()
         val offsetMap = mutableMapOf<String, Int>()
 
-        for (str in strings) {
-            offsetMap[str] = outputStream.size()
-            outputStream.write(str.toByteArray(StandardCharsets.UTF_8))
-            outputStream.write(0)
+        outputStream.write("...".toByteArray(StandardCharsets.UTF_8))
+        outputStream.write(0)
+        offsetMap["..."] = 0
+        offsetMap[""] = 3
+
+        fun addString(str: String) {
+            if (offsetMap.containsKey(str)) {
+                return
+            }
+            val bytes = str.toByteArray(StandardCharsets.UTF_8)
+            if (outputStream.size() + bytes.size + 1 <= 4096) {
+                offsetMap[str] = outputStream.size()
+                outputStream.write(bytes)
+                outputStream.write(0)
+            }
         }
+
+        alerts.forEach { addString(it.title) }
+        alerts.forEach { addString(it.calendarName) }
+        alerts.forEach { addString(it.location) }
+        alerts.forEach { addString(it.details) }
 
         return Pair(outputStream.toByteArray(), offsetMap)
     }
