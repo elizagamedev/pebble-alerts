@@ -4,6 +4,9 @@ import android.content.Context
 import io.rebble.pebblekit2.client.DefaultPebbleSender
 import io.rebble.pebblekit2.client.PebbleSender
 import io.rebble.pebblekit2.common.model.PebbleDictionaryItem
+import io.rebble.pebblekit2.common.model.TimelineLayout
+import io.rebble.pebblekit2.common.model.TimelineLayoutType
+import io.rebble.pebblekit2.common.model.TimelinePin
 import io.rebble.pebblekit2.common.model.TransmissionResult
 import io.rebble.pebblekit2.common.model.WatchIdentifier
 import kotlinx.coroutines.withTimeoutOrNull
@@ -12,6 +15,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 private const val MSG_VERSION = 0u
@@ -54,12 +58,14 @@ class PebbleManager(
         }
 
     suspend fun send(
-        settings: GeneralSettings,
+        settings: AppSettings,
         alerts: Sequence<Alert>,
         watch: WatchIdentifier? = null,
     ) {
         val now = Instant.now()
         val filteredAlerts = alerts.filter { now <= it.endTime }.take(MAX_ALERTS).toList()
+
+        syncContactTimelinePins(context, settings.contactSettings, now, sender)
 
         // Convert all strings into a heap.
         val (stringHeap, strings) =
@@ -80,10 +86,13 @@ class PebbleManager(
             ByteBuffer.allocate(payloadLength).apply {
                 order(ByteOrder.LITTLE_ENDIAN)
 
-                putInt(settings.snoozeDuration.inWholeSeconds.toInt())
+                putInt(
+                    settings.generalSettings.snoozeDuration.inWholeSeconds
+                        .toInt(),
+                )
                 putInt(filteredAlerts.size)
                 putInt(stringHeap.size)
-                putInt(settings.vibePattern.value)
+                putInt(settings.generalSettings.vibePattern.value)
 
                 filteredAlerts.forEach { alert ->
                     putInt(alert.id.toInt())
@@ -127,5 +136,63 @@ class PebbleManager(
 
     companion object {
         val APP_UUID = UUID.fromString("075a861e-c60b-4bb6-b3f2-b592925e86b1")
+    }
+}
+
+private suspend fun syncContactTimelinePins(
+    context: Context,
+    contactSettings: Map<ContactEventType, ContactSettings>,
+    now: Instant,
+    sender: PebbleSender,
+) {
+    val maxPinTime = now.plus(2, ChronoUnit.DAYS)
+    val minPinTime = now.minus(1, ChronoUnit.DAYS)
+
+    val pinsToSync =
+        Alert
+            .visitUpcomingContactEvents(context, contactSettings) {
+                config,
+                id,
+                _,
+                title,
+                dayOfDetails,
+                _,
+                startTime,
+                ->
+                if (startTime <= maxPinTime && startTime >= minPinTime) {
+                    val pinId = "contact-$id"
+                    if (config.timelinePins) {
+                        val pin =
+                            TimelinePin(
+                                id = pinId,
+                                startTime =
+                                    kotlin.time.Instant.fromEpochMilliseconds(
+                                        startTime.toEpochMilli(),
+                                    ),
+                                duration = null,
+                                layout =
+                                    TimelineLayout(
+                                        type = TimelineLayoutType.CALENDAR_PIN,
+                                        title = title,
+                                        body = dayOfDetails.takeIf { it.isNotBlank() },
+                                        tinyIcon = "system://images/BIRTHDAY_EVENT",
+                                        largeIcon = "system://images/BIRTHDAY_EVENT",
+                                    ),
+                            )
+                        sequenceOf(pinId to pin)
+                    } else {
+                        sequenceOf(pinId to null)
+                    }
+                } else {
+                    emptySequence<Pair<String, TimelinePin?>>()
+                }
+            }.toList()
+
+    for ((pinId, pin) in pinsToSync) {
+        if (pin != null) {
+            sender.insertTimelinePin(PebbleManager.APP_UUID, pin)
+        } else {
+            sender.deleteTimelinePin(PebbleManager.APP_UUID, pinId)
+        }
     }
 }

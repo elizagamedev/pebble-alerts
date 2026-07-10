@@ -62,4 +62,33 @@
     <string name="multi_day_mode_off">Off</string>
     <string name="multi_day_mode_first_day">Alert on first day</string>
     <string name="multi_day_mode_every_day">Alert every day</string>
+
+    <!-- Alert text -->
+    <string name="alert_untitled">Untitled</string>
+
+    <string name="alert_title_birthday">%1$s\'s Birthday</string>
+    <string name="alert_title_anniversary">%1$s\'s Anniversary</string>
+
+    <string name="alert_contact_today">Today, %1$s</string>
+    <string name="alert_contact_tomorrow">Tomorrow, %1$s</string>
+
+    <plurals name="alert_birthday_today_years">
+        <item quantity="one">Today, on %1$s, %2$s is %3$d year old!</item>
+        <item quantity="other">Today, on %1$s, %2$s is %3$d years old!</item>
+    </plurals>
+
+    <plurals name="alert_birthday_tomorrow_years">
+        <item quantity="one">Tomorrow, on %1$s, %2$s will be %3$d year old!</item>
+        <item quantity="other">Tomorrow, on %1$s, %2$s will be %3$d years old!</item>
+    </plurals>
+
+    <plurals name="alert_anniversary_today_years">
+        <item quantity="one">Today, on %1$s, it\'s been %2$d year!</item>
+        <item quantity="other">Today, on %1$s, it\'s been %2$d years!</item>
+    </plurals>
+
+    <plurals name="alert_anniversary_tomorrow_years">
+        <item quantity="one">Tomorrow, on %1$s, it will be %2$d year!</item>
+        <item quantity="other">Tomorrow, on %1$s, it will be %2$d years!</item>
+    </plurals>
 </resources>

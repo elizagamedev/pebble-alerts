@@ -74,7 +74,7 @@ class MainActivity : ComponentActivity() {
         val settings = settingsRepository.appSettingsFlow.value ?: return
         val alerts = Alert.getUpcomingAlerts(this@MainActivity, settings)
         pebbleManager.withOpenAppOnWatch {
-            pebbleManager.send(settings.generalSettings, alerts.asSequence())
+            pebbleManager.send(settings, alerts.asSequence())
             settingsRepository.updateGeneralSettings {
                 it.copy(lastSynced = System.currentTimeMillis())
             }
@@ -96,6 +96,7 @@ class MainActivity : ComponentActivity() {
                     endTime = now.plusSeconds(7200),
                     alertTime = now.plusSeconds(5),
                     color = PebbleColor.fromRgb(0x00FF00),
+                    allDay = false,
                 ),
                 Alert(
                     id = 1002u,
@@ -107,17 +108,7 @@ class MainActivity : ComponentActivity() {
                     endTime = now.plusSeconds(10800),
                     alertTime = now.plusSeconds(5),
                     color = PebbleColor.fromRgb(0xFF0000),
-                ),
-                Alert(
-                    id = 1003u,
-                    calendarName = "Birthdays",
-                    title = "John's Birthday",
-                    details = "He is 30 today!",
-                    location = "",
-                    startTime = now.plusSeconds(86400),
-                    endTime = now.plusSeconds(86400 * 2),
-                    alertTime = now.plusSeconds(5),
-                    color = PebbleColor.fromRgb(0x0000FF),
+                    allDay = false,
                 ),
                 Alert(
                     id = 1004u,
@@ -129,6 +120,7 @@ class MainActivity : ComponentActivity() {
                     endTime = now.plusSeconds(3600 * 5),
                     alertTime = now.plusSeconds(30),
                     color = PebbleColor.fromRgb(0x00FF00),
+                    allDay = false,
                 ),
                 Alert(
                     id = 1005u,
@@ -138,12 +130,29 @@ class MainActivity : ComponentActivity() {
                     location = "Dr. Smith's Clinic",
                     startTime = now.plusSeconds(3600 * 24),
                     endTime = now.plusSeconds(3600 * 25),
-                    alertTime = now.plusSeconds(30),
-                    color = PebbleColor.fromRgb(0xFF00FF),
+                    alertTime = now.plusSeconds(3600 * 24),
+                    color = PebbleColor.fromRgb(0x0000FF),
+                    allDay = false,
+                ),
+                Alert(
+                    id = 1003u,
+                    calendarName = "Birthdays",
+                    title = "John's Birthday",
+                    details = "He is 30 today!",
+                    location = "",
+                    startTime = now.plusSeconds(86400),
+                    endTime = now.plusSeconds(86400 * 2),
+                    alertTime = now.plusSeconds(5),
+                    color = PebbleColor.fromRgb(0x0000FF),
+                    allDay = true,
                 ),
             )
+
         pebbleManager.withOpenAppOnWatch {
-            pebbleManager.send(settings.generalSettings, alerts.asSequence())
+            pebbleManager.send(
+                settings,
+                alerts.asSequence(),
+            )
         }
     }
 }
