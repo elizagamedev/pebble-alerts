@@ -99,7 +99,10 @@ class PebbleManager(
                     putInt(alert.alertTime.epochSecond.toInt())
                     putInt(alert.startTime.epochSecond.toInt())
                     putInt(alert.endTime.epochSecond.toInt())
-                    putInt(alert.color.toInt())
+                    val flags =
+                        (alert.color.toInt() and 0x3F) or
+                            (if (alert.allDay) 0x80000000.toInt() else 0)
+                    putInt(flags)
                     putInt(strings.getValue(alert.calendarName))
                     putInt(strings.getValue(alert.title))
                     putInt(strings.getValue(alert.details))

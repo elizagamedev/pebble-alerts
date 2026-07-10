@@ -14,6 +14,9 @@
 #define ALARM_DISMISSED ((time_t)(-1))
 #define ALERT_QUEUE_EMPTY UINT32_MAX
 
+#define ALERT_COLOR(flags) ((GColor)(uint8_t)((flags) | 0xC0))
+#define ALERT_IS_ALL_DAY(flags) (((flags) & 0x80000000) != 0)
+
 typedef enum {
   APP_MODE_REFRESH,
   APP_MODE_ALERT,
@@ -38,7 +41,7 @@ typedef struct {
   time_t alert_time;
   time_t start_time;
   time_t end_time;
-  GColor color;
+  uint32_t flags;
   uint32_t calendar;
   uint32_t title;
   uint32_t details;
@@ -439,8 +442,8 @@ static const char *prv_get_string(uint32_t offset) {
 }
 
 static void prv_make_alert_ui(const AlertData *alert, AlertUi *ui) {
-  GColor bg_color = PBL_IF_COLOR_ELSE(alert->color, GColorWhite);
-  GColor fg_color = PBL_IF_COLOR_ELSE(gcolor_legible_over(alert->color), GColorBlack);
+  GColor bg_color = PBL_IF_COLOR_ELSE(ALERT_COLOR(alert->flags), GColorWhite);
+  GColor fg_color = PBL_IF_COLOR_ELSE(gcolor_legible_over(ALERT_COLOR(alert->flags)), GColorBlack);
 
   ui->bg_color = bg_color;
 
@@ -495,27 +498,35 @@ static void prv_make_alert_ui(const AlertData *alert, AlertUi *ui) {
 
   // Start time
   layer_bounds.origin.y += text_layer_get_content_size(ui->title_layer).h + 4;
-  layer_bounds.origin.x = H_MARGIN_TIME;
-  layer_bounds.size.w = width - 2 * H_MARGIN_TIME;
-  layer_bounds.size.h = 26;
-  ui->start_time_layer = text_layer_create(layer_bounds);
-  text_layer_set_font(ui->start_time_layer,
-                      fonts_get_system_font(FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM));
-  text_layer_set_text(ui->start_time_layer, ui->start_time_buf);
-  text_layer_set_text_color(ui->start_time_layer, fg_color);
-  text_layer_set_background_color(ui->start_time_layer, GColorClear);
-  layer_add_child(ui->info_container_layer, text_layer_get_layer(ui->start_time_layer));
 
-  // End time
-  layer_bounds.origin.y += layer_bounds.size.h;
-  ui->end_time_layer = text_layer_create(layer_bounds);
-  text_layer_set_font(ui->end_time_layer,
-                      fonts_get_system_font(FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM));
-  text_layer_set_text(ui->end_time_layer, ui->end_time_buf);
-  text_layer_set_text_color(ui->end_time_layer, fg_color);
-  text_layer_set_background_color(ui->end_time_layer, GColorClear);
-  text_layer_set_text_alignment(ui->end_time_layer, GTextAlignmentRight);
-  layer_add_child(ui->info_container_layer, text_layer_get_layer(ui->end_time_layer));
+  if (!ALERT_IS_ALL_DAY(alert->flags)) {
+    layer_bounds.origin.x = H_MARGIN_TIME;
+    layer_bounds.size.w = width - 2 * H_MARGIN_TIME;
+    layer_bounds.size.h = 26;
+    ui->start_time_layer = text_layer_create(layer_bounds);
+    text_layer_set_font(ui->start_time_layer,
+                        fonts_get_system_font(FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM));
+    text_layer_set_text(ui->start_time_layer, ui->start_time_buf);
+    text_layer_set_text_color(ui->start_time_layer, fg_color);
+    text_layer_set_background_color(ui->start_time_layer, GColorClear);
+    layer_add_child(ui->info_container_layer, text_layer_get_layer(ui->start_time_layer));
+
+    // End time
+    layer_bounds.origin.y += layer_bounds.size.h;
+    ui->end_time_layer = text_layer_create(layer_bounds);
+    text_layer_set_font(ui->end_time_layer,
+                        fonts_get_system_font(FONT_KEY_LECO_26_BOLD_NUMBERS_AM_PM));
+    text_layer_set_text(ui->end_time_layer, ui->end_time_buf);
+    text_layer_set_text_color(ui->end_time_layer, fg_color);
+    text_layer_set_background_color(ui->end_time_layer, GColorClear);
+    text_layer_set_text_alignment(ui->end_time_layer, GTextAlignmentRight);
+    layer_add_child(ui->info_container_layer, text_layer_get_layer(ui->end_time_layer));
+
+    layer_bounds.origin.y += layer_bounds.size.h;
+  } else {
+    ui->start_time_layer = NULL;
+    ui->end_time_layer = NULL;
+  }
 
   layer_bounds.origin.x = H_MARGIN;
   layer_bounds.size.w = text_width;
@@ -523,7 +534,6 @@ static void prv_make_alert_ui(const AlertData *alert, AlertUi *ui) {
   // Location
   const char *location_str = prv_get_string(alert->location);
   if (*location_str) {
-    layer_bounds.origin.y += layer_bounds.size.h;
     layer_bounds.size.h = 18;
     ui->location_layer = text_layer_create(layer_bounds);
     text_layer_set_text(ui->location_layer, location_str);
@@ -533,6 +543,8 @@ static void prv_make_alert_ui(const AlertData *alert, AlertUi *ui) {
     text_layer_set_overflow_mode(ui->location_layer, GTextOverflowModeTrailingEllipsis);
     text_layer_set_text_alignment(ui->location_layer, GTextAlignmentCenter);
     layer_add_child(ui->info_container_layer, text_layer_get_layer(ui->location_layer));
+
+    layer_bounds.origin.y += layer_bounds.size.h;
   } else {
     ui->location_layer = NULL;
   }
@@ -541,7 +553,6 @@ static void prv_make_alert_ui(const AlertData *alert, AlertUi *ui) {
   const char *details_str = prv_get_string(alert->details);
   if (*details_str) {
     action_bar_layer_set_icon(s_action_bar, BUTTON_ID_SELECT, s_icon_read_more);
-    layer_bounds.origin.y += layer_bounds.size.h;
 
     ui->details_normal_frame =
         GRect(0, layer_bounds.origin.y, bounds.size.w, bounds.size.h - layer_bounds.origin.y);
