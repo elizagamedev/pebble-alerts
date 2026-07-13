@@ -579,21 +579,22 @@ private fun <T> visitUpcomingContactEventsInternal(
                             }
                         }
 
-                    val subtitle = years?.let {
-                        if (type == ContactEventType.BIRTHDAY) {
-                            context.resources.getQuantityString(
-                                R.plurals.timeline_subtitle_birthday_years,
-                                it,
-                                it
-                            )
-                        } else {
-                            context.resources.getQuantityString(
-                                R.plurals.timeline_subtitle_anniversary_years,
-                                it,
-                                it
-                            )
+                    val subtitle =
+                        years?.let {
+                            if (type == ContactEventType.BIRTHDAY) {
+                                context.resources.getQuantityString(
+                                    R.plurals.timeline_subtitle_birthday_years,
+                                    it,
+                                    it,
+                                )
+                            } else {
+                                context.resources.getQuantityString(
+                                    R.plurals.timeline_subtitle_anniversary_years,
+                                    it,
+                                    it,
+                                )
+                            }
                         }
-                    }
 
                     yieldAll(
                         onContactEvent(

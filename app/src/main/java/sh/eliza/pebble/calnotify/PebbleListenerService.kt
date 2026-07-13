@@ -1,11 +1,13 @@
 package sh.eliza.pebble.calnotify
 
+import android.util.Log
 import io.rebble.pebblekit2.client.BasePebbleListenerService
 import io.rebble.pebblekit2.common.model.WatchIdentifier
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 
@@ -68,14 +70,20 @@ class PebbleListenerService : BasePebbleListenerService() {
         }
 
         coroutineScope.launch {
-            val settingsRepository = SettingsRepository(dataStore, coroutineScope)
-            val settings = settingsRepository.appSettingsFlow.filterNotNull().first()
-            val alerts = Alert.getUpcomingAlerts(applicationContext, settings)
-            pebbleManager.send(settings, alerts, watch)
-            settingsRepository.updateGeneralSettings {
-                it.copy(
-                    lastSynced = System.currentTimeMillis(),
-                )
+            try {
+                withTimeout(SYNC_TIMEOUT_MS) {
+                    val settingsRepository = SettingsRepository(dataStore, coroutineScope)
+                    val settings = settingsRepository.appSettingsFlow.filterNotNull().first()
+                    val alerts = Alert.getUpcomingAlerts(applicationContext, settings)
+                    pebbleManager.send(settings, alerts, watch)
+                    settingsRepository.updateGeneralSettings {
+                        it.copy(
+                            lastSynced = System.currentTimeMillis(),
+                        )
+                    }
+                }
+            } catch (e: Throwable) {
+                Log.e("PebbleListenerService", "Failed to sync to watch", e)
             }
         }
     }

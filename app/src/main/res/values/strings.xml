@@ -101,4 +101,16 @@
         <item quantity="one">%1$d year</item>
         <item quantity="other">%1$d years</item>
     </plurals>
+
+    <!-- Error Messages -->
+    <string name="error_sync_failed">Sync failed: %1$s</string>
+    <string name="error_timeout">Timeout</string>
+    <string name="error_start_app_reason">Failed to start app on watch: %1$s</string>
+    <string name="error_start_app">Failed to start app on watch</string>
+    <string name="error_timeout_app">Timed out waiting for app on watch</string>
+    <string name="error_send_data_reason">Failed to send data to watch: %1$s</string>
+    <string name="error_send_data">Failed to send data to watch</string>
+    <string name="error_acquire_transaction">Failed to acquire transaction for watch app</string>
+    <string name="error_sync_timeline_pin">Failed to sync timeline pin: %1$s</string>
+    <string name="sync_success">Synced successfully!</string>
 </resources>

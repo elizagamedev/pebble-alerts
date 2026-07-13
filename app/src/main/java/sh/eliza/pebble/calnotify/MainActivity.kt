@@ -8,11 +8,15 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import sh.eliza.pebble.calnotify.ui.theme.AppTheme
 import java.time.Duration
 import java.time.Instant
@@ -31,6 +35,8 @@ private const val LOREM_IPSUM =
         "turpis et commodo pharetra, est eros bibendum elit, nec luctus magna felis " +
         "sollicitudin mauris."
 
+const val SYNC_TIMEOUT_MS = 5000L
+
 class MainActivity : ComponentActivity() {
     private lateinit var pebbleManager: PebbleManager
 
@@ -47,17 +53,45 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             AppTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                val snackbarHostState = remember { SnackbarHostState() }
+                Scaffold(
+                    modifier = Modifier.fillMaxSize(),
+                    snackbarHost = { SnackbarHost(snackbarHostState) },
+                ) { innerPadding ->
                     SettingsScreen(
                         repository = settingsRepository,
                         onSyncRequest = {
                             lifecycleScope.launch {
-                                onSyncRequest(settingsRepository)
+                                try {
+                                    withTimeout(SYNC_TIMEOUT_MS) {
+                                        onSyncRequest(settingsRepository)
+                                    }
+                                    snackbarHostState.showSnackbar(getString(R.string.sync_success))
+                                } catch (e: Throwable) {
+                                    snackbarHostState.showSnackbar(
+                                        getString(
+                                            R.string.error_sync_failed,
+                                            e.message ?: getString(R.string.error_timeout),
+                                        ),
+                                    )
+                                }
                             }
                         },
                         onSyncTestDataRequest = {
                             lifecycleScope.launch {
-                                syncTestData(settingsRepository)
+                                try {
+                                    withTimeout(SYNC_TIMEOUT_MS) {
+                                        syncTestData(settingsRepository)
+                                    }
+                                    snackbarHostState.showSnackbar(getString(R.string.sync_success))
+                                } catch (e: Throwable) {
+                                    snackbarHostState.showSnackbar(
+                                        getString(
+                                            R.string.error_sync_failed,
+                                            e.message ?: getString(R.string.error_timeout),
+                                        ),
+                                    )
+                                }
                             }
                         },
                     )

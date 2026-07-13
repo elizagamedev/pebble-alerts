@@ -7,9 +7,9 @@ import io.rebble.pebblekit2.common.model.PebbleDictionaryItem
 import io.rebble.pebblekit2.common.model.TimelineLayout
 import io.rebble.pebblekit2.common.model.TimelineLayoutType
 import io.rebble.pebblekit2.common.model.TimelinePin
+import io.rebble.pebblekit2.common.model.TimelineResult
 import io.rebble.pebblekit2.common.model.TransmissionResult
 import io.rebble.pebblekit2.common.model.WatchIdentifier
-import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -23,7 +23,7 @@ private const val MSG_VERSION = 0u
 private const val MAX_ALERTS = 6
 
 class PebbleManager(
-    private val context: Context,
+    val context: Context,
 ) : AutoCloseable {
     val sender: PebbleSender = DefaultPebbleSender(context)
 
@@ -37,26 +37,40 @@ class PebbleManager(
     suspend inline fun <T> withOpenAppOnWatch(
         watch: WatchIdentifier? = null,
         crossinline body: suspend () -> T,
-    ): T? =
+    ): T =
         PebbleListenerService.withTransaction(watch) { onAppOpened, onAppClosed ->
-            val result = sender.startAppOnTheWatch(APP_UUID, watch?.let { listOf(it) })
+            val startResult = sender.startAppOnTheWatch(APP_UUID, watch?.let { listOf(it) })
             val willOpen =
                 if (watch != null) {
-                    result?.get(watch) == TransmissionResult.Success
+                    startResult?.get(watch) == TransmissionResult.Success
                 } else {
-                    result?.values?.any { it == TransmissionResult.Success } ?: false
+                    startResult?.values?.any { it == TransmissionResult.Success } ?: false
                 }
             if (!willOpen) {
-                return@withTransaction null
+                val reasons =
+                    if (watch != null) {
+                        listOfNotNull(startResult?.get(watch))
+                    } else {
+                        startResult?.values?.filter { it != TransmissionResult.Success }
+                            ?: emptyList()
+                    }
+                val msg =
+                    if (reasons.isNotEmpty()) {
+                        context.getString(
+                            R.string.error_start_app_reason,
+                            reasons.joinToString(", "),
+                        )
+                    } else {
+                        context.getString(R.string.error_start_app)
+                    }
+                error(msg)
             }
 
-            withTimeoutOrNull(2000) {
-                onAppOpened.await()
-                val result = body()
-                onAppClosed.await()
-                result
-            }
-        }
+            onAppOpened.await()
+            val bodyResult = body()
+            onAppClosed.await()
+            bodyResult
+        } ?: error(context.getString(R.string.error_acquire_transaction))
 
     suspend fun send(
         settings: AppSettings,
@@ -112,7 +126,28 @@ class PebbleManager(
                 1u to PebbleDictionaryItem.Bytes(payload.array()),
             )
 
-        sender.sendDataToPebble(APP_UUID, dict, watch?.let { listOf(it) })
+        val result = sender.sendDataToPebble(APP_UUID, dict, watch?.let { listOf(it) })
+        val success =
+            if (watch != null) {
+                result?.get(watch) == TransmissionResult.Success
+            } else {
+                result?.values?.any { it == TransmissionResult.Success } ?: false
+            }
+        if (!success) {
+            val reasons =
+                if (watch != null) {
+                    listOfNotNull(result?.get(watch))
+                } else {
+                    result?.values?.filter { it != TransmissionResult.Success } ?: emptyList()
+                }
+            val msg =
+                if (reasons.isNotEmpty()) {
+                    context.getString(R.string.error_send_data_reason, reasons.joinToString(", "))
+                } else {
+                    context.getString(R.string.error_send_data)
+                }
+            error(msg)
+        }
     }
 
     fun makeStringHeap(alerts: List<Alert>): Pair<ByteArray, Map<String, Int>> {
@@ -201,10 +236,14 @@ private suspend fun syncContactTimelinePins(
             }.toList()
 
     for ((pinId, pin) in pinsToSync) {
-        if (pin != null) {
-            sender.insertTimelinePin(PebbleManager.APP_UUID, pin)
-        } else {
-            sender.deleteTimelinePin(PebbleManager.APP_UUID, pinId)
+        val result =
+            if (pin != null) {
+                sender.insertTimelinePin(PebbleManager.APP_UUID, pin)
+            } else {
+                sender.deleteTimelinePin(PebbleManager.APP_UUID, pinId)
+            }
+        if (result != TimelineResult.Success) {
+            error(context.getString(R.string.error_sync_timeline_pin, result.toString()))
         }
     }
 }

@@ -65,7 +65,7 @@ enum class ContactEventType(
 }
 
 enum class VibePattern(
-    @StringRes val labelResId: Int,
+    @param:StringRes val labelResId: Int,
     val value: Int,
 ) {
     NONE(R.string.vibe_pattern_none, 0),
