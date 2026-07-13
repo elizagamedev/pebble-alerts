@@ -20,7 +20,6 @@ import java.util.UUID
 import kotlin.time.Duration.Companion.hours
 
 private const val MSG_VERSION = 0u
-private const val MAX_ALERTS = 6
 
 class PebbleManager(
     val context: Context,
@@ -74,11 +73,11 @@ class PebbleManager(
 
     suspend fun send(
         settings: AppSettings,
-        alerts: Sequence<Alert>,
+        alerts: List<Alert>,
         watch: WatchIdentifier? = null,
     ) {
         val now = Instant.now()
-        val filteredAlerts = alerts.filter { now <= it.endTime }.take(MAX_ALERTS).toList()
+        val filteredAlerts = alerts.filter { now <= it.endTime }.take(Alert.MAX_WATCH_ALERTS)
 
         syncContactTimelinePins(context, settings.contactSettings, now, sender)
 

@@ -102,6 +102,8 @@ import java.util.Locale
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
+import java.util.Date
+import java.text.DateFormat
 
 fun formatDuration(
     context: Context,
@@ -337,13 +339,9 @@ fun HomeScreen(
             SettingsGroup {
                 val lastSyncedStr =
                     if (settings.generalSettings.lastSynced != null) {
-                        val date = java.util.Date(settings.generalSettings.lastSynced)
-                        val format =
-                            android.text.format.DateFormat
-                                .getMediumDateFormat(context)
-                        val timeFormat =
-                            android.text.format.DateFormat
-                                .getTimeFormat(context)
+                        val date = Date.from(settings.generalSettings.lastSynced)
+                        val format = DateFormat.getMediumDateFormat(context)
+                        val timeFormat = DateFormat.getTimeFormat(context)
                         stringResource(
                             R.string.sync_time,
                             format.format(date),

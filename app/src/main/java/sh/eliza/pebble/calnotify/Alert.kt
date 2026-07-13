@@ -10,6 +10,13 @@ import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Event.TYPE_ANNIVERSARY
 import android.provider.ContactsContract.CommonDataKinds.Event.TYPE_BIRTHDAY
 import android.text.format.DateUtils
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -21,6 +28,20 @@ import java.time.temporal.ChronoUnit
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.toJavaDuration
+
+private object InstantSerializer : KSerializer<Instant> {
+    override val descriptor: SerialDescriptor =
+        PrimitiveSerialDescriptor("Instant", PrimitiveKind.LONG)
+
+    override fun serialize(
+        encoder: Encoder,
+        value: Instant,
+    ) {
+        encoder.encodeLong(value.toEpochMilli())
+    }
+
+    override fun deserialize(decoder: Decoder): Instant = Instant.ofEpochMilli(decoder.decodeLong())
+}
 
 typealias OnAllDayCalendarEvent<T> = (
     config: CalendarSettings,
@@ -59,27 +80,30 @@ typealias OnContactEvent<T> = (
     subtitle: String?,
 ) -> Sequence<T>
 
+@Serializable
 data class Alert(
     val id: UInt,
     val calendarName: String,
     val title: String,
     val details: String,
     val location: String,
-    val startTime: Instant,
-    val endTime: Instant,
-    val alertTime: Instant,
+    @Serializable(with = InstantSerializer::class) val startTime: Instant,
+    @Serializable(with = InstantSerializer::class) val endTime: Instant,
+    @Serializable(with = InstantSerializer::class) val alertTime: Instant,
     val color: PebbleColor,
     val allDay: Boolean,
 ) {
     companion object {
+        const val MAX_WATCH_ALERTS = 6
+
         fun getUpcomingAlerts(
             context: Context,
             appSettings: AppSettings,
-        ): Sequence<Alert> =
+        ): List<Alert> =
             (
                 getUpcomingCalendarAlerts(context, appSettings.calendarSettings) +
                     getUpcomingContactAlerts(context, appSettings.contactSettings)
-            ).sortedWith(compareBy({ it.alertTime }, { it.id }))
+            ).sortedWith(compareBy({ it.alertTime }, { it.id })).toList()
 
         fun getUpcomingCalendarAlerts(
             context: Context,

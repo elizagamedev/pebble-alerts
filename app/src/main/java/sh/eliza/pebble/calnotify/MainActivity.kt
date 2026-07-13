@@ -43,6 +43,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
+
+        SyncWorker.scheduleNextUriTrigger(applicationContext)
+
         pebbleManager = PebbleManager(applicationContext)
 
         // Use SettingsRepository to fetch actual real-time settings
@@ -109,10 +112,11 @@ class MainActivity : ComponentActivity() {
         val settings = settingsRepository.appSettingsFlow.value ?: return
         val alerts = Alert.getUpcomingAlerts(this@MainActivity, settings)
         pebbleManager.withOpenAppOnWatch {
-            pebbleManager.send(settings, alerts.asSequence())
+            pebbleManager.send(settings, alerts)
             settingsRepository.updateGeneralSettings {
-                it.copy(lastSynced = System.currentTimeMillis())
+                it.copy(lastSynced = Instant.now())
             }
+            settingsRepository.updateLastSentAlert(alerts.firstOrNull())
         }
     }
 
@@ -184,10 +188,7 @@ class MainActivity : ComponentActivity() {
             )
 
         pebbleManager.withOpenAppOnWatch {
-            pebbleManager.send(
-                settings,
-                alerts.asSequence(),
-            )
+            pebbleManager.send(settings, alerts)
         }
     }
 }

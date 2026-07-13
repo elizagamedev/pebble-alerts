@@ -8,10 +8,13 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 
 private const val MSG_POLL = 0u
+
+private const val TAG = "PebbleListenerService"
 
 class PebbleListenerService : BasePebbleListenerService() {
     @PublishedApi
@@ -77,13 +80,12 @@ class PebbleListenerService : BasePebbleListenerService() {
                     val alerts = Alert.getUpcomingAlerts(applicationContext, settings)
                     pebbleManager.send(settings, alerts, watch)
                     settingsRepository.updateGeneralSettings {
-                        it.copy(
-                            lastSynced = System.currentTimeMillis(),
-                        )
+                        it.copy(lastSynced = Instant.now())
                     }
+                    settingsRepository.updateLastSentAlert(alerts.firstOrNull())
                 }
             } catch (e: Throwable) {
-                Log.e("PebbleListenerService", "Failed to sync to watch", e)
+                Log.e(TAG, "Failed to sync to watch", e)
             }
         }
     }

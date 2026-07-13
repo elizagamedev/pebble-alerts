@@ -1,6 +1,7 @@
 package sh.eliza.pebble.calnotify
 
 import android.content.Context
+import android.util.Log
 import androidx.annotation.StringRes
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.MutablePreferences
@@ -12,10 +13,14 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.time.Instant
 import java.time.LocalTime
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
@@ -25,6 +30,8 @@ private val CALENDAR_ENABLE_REGEX = Regex("""^calendar_(\d+)_enable$""")
 
 private val DEFAULT_DAY_OF_TIME = LocalTime.of(9, 0) // 9:00 AM
 private val DEFAULT_DAY_BEFORE_TIME = LocalTime.of(18, 0) // 6:00 PM
+
+private const val TAG = "SettingsRepository"
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
@@ -77,13 +84,13 @@ enum class VibePattern(
 data class GeneralSettings(
     val snoozeDuration: Duration,
     val vibePattern: VibePattern,
-    val lastSynced: Long?,
+    val lastSynced: Instant?,
 ) {
     fun updatePrefs(prefs: MutablePreferences) {
         prefs.writeDuration("general_snooze_duration", snoozeDuration)
         prefs[stringPreferencesKey("general_vibe_pattern")] = vibePattern.name
         if (lastSynced != null) {
-            prefs[longPreferencesKey("general_last_synced")] = lastSynced
+            prefs[longPreferencesKey("general_last_synced")] = lastSynced.toEpochMilli()
         } else {
             prefs.remove(longPreferencesKey("general_last_synced"))
         }
@@ -109,7 +116,12 @@ data class GeneralSettings(
                             null
                         }
                     } ?: DEFAULT.vibePattern,
-                lastSynced = prefs[longPreferencesKey("general_last_synced")],
+                lastSynced =
+                    prefs[
+                        longPreferencesKey(
+                            "general_last_synced",
+                        ),
+                    ]?.let { Instant.ofEpochMilli(it) },
             )
     }
 }
@@ -321,6 +333,29 @@ class SettingsRepository(
         dataStore.edit { prefs ->
             val current = ContactSettings.createFromPrefs(prefs, type)
             transform(current).updatePrefs(prefs, type)
+        }
+    }
+
+    val lastSentAlertFlow: Flow<Alert?> =
+        dataStore.data
+            .map { prefs ->
+                prefs[stringPreferencesKey("last_sent_alert")]?.let {
+                    try {
+                        Json.decodeFromString<Alert>(it)
+                    } catch (e: Throwable) {
+                        Log.e(TAG, "Failed to deserialize last_sent_alert", e)
+                        null
+                    }
+                }
+            }
+
+    suspend fun updateLastSentAlert(alert: Alert?) {
+        dataStore.edit { prefs ->
+            if (alert != null) {
+                prefs[stringPreferencesKey("last_sent_alert")] = Json.encodeToString(alert)
+            } else {
+                prefs.remove(stringPreferencesKey("last_sent_alert"))
+            }
         }
     }
 }

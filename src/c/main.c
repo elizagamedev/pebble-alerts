@@ -316,10 +316,21 @@ static void prv_alert_nudge() {
   animation_schedule(seq);
 }
 
+#define SNOOZE_GRACE_PERIOD 120
+
 static void prv_alert_snooze() {
   uint32_t idx = s_alert_queue[0];
   AlertData *alert = &s_persist.header.alerts[idx];
-  time_t alarm_time = time(NULL) + s_persist.header.settings.snooze_duration;
+  const time_t now = time(NULL);
+  const uint32_t snooze_duration = s_persist.header.settings.snooze_duration;
+  time_t alarm_time = now + snooze_duration;
+
+  // If the next alarm would happen after the start of the event, instead schedule it at the event.
+  // Give a two minute window before the start of the event where we ignore this rule.
+  if (snooze_duration > SNOOZE_GRACE_PERIOD && now + SNOOZE_GRACE_PERIOD < alert->start_time &&
+      alarm_time > alert->start_time) {
+    alarm_time = alert->start_time;
+  }
 
   // Check if there is another alert with the same ID whose alert_time is <= alarm_time
   // and > the current alert's time. If so, dismiss this reminder instead.
