@@ -125,8 +125,8 @@ static const char *const s_strings[NUM_LANGS][NUM_STRINGS] = {
         },
     [LANG_JAPANESE] =
         {
-            [STR_CONNECTING] = "コンパニオンアプリに接続中…",
-            [STR_DONE] = "読み取り完了！",
+            [STR_CONNECTING] = "コンパニオンアプリに接続中",
+            [STR_DONE] = "読み取り完了",
             [STR_PARSE_ERROR] = "コンパニオンアプリからの読み込み失敗",
         },
 };

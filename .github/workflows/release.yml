@@ -21,7 +21,7 @@ jobs:
       - name: Build
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_FILE: keystore.jks
+          KEYSTORE_FILE: ${{ github.workspace }}/keystore.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: calnotify

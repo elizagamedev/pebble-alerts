@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Pebble Flexible Alerts</string>
+
+    <!-- General category and preferences -->
+    <string name="category_general">一般</string>
+    <string name="pref_snooze_duration">スヌーズ時間</string>
+    <string name="pref_sync_now">今すぐ同期</string>
+    <string name="sync_never">最終同期: 未実行</string>
+    <string name="sync_time">最終同期: %1$s %2$s</string>
+    <string name="duration_off">オフ</string>
+    <string name="duration_when_event_starts">イベント開始時</string>
+    <string name="pref_vibe_pattern">バイブレーションパターン</string>
+    <string name="vibe_pattern_none">なし</string>
+    <string name="vibe_pattern_short">短く振動</string>
+    <string name="vibe_pattern_long">長く振動</string>
+    <string name="vibe_pattern_double">2回振動</string>
+
+    <!-- Permissions Category -->
+    <string name="category_permissions">権限</string>
+    <string name="permission_calendar">カレンダー</string>
+    <string name="permission_contacts">連絡先</string>
+    <string name="permission_calendar_placeholder">設定を表示または編集するには、カレンダーの権限を付与してください。</string>
+    <string name="permission_contacts_placeholder">設定を表示または編集するには、連絡先の権限を付与してください。</string>
+
+    <!-- Calendars Category -->
+    <string name="category_calendars">カレンダー</string>
+    <string name="no_calendars_found">カレンダーが見つかりません。</string>
+
+    <!-- Events Category -->
+    <string name="category_events">イベント</string>
+
+    <!-- Contact event types -->
+    <string name="contact_event_type_birthday">誕生日</string>
+    <string name="contact_event_type_anniversary">記念日</string>
+
+    <!-- Detail screen actions -->
+    <string name="action_back">戻る</string>
+    <string name="action_cancel">キャンセル</string>
+    <string name="action_ok">OK</string>
+    <string name="action_close">閉じる</string>
+
+    <!-- Contact & Calendar Detail Preferences -->
+    <string name="pref_add_timeline_pins">タイムラインピンを追加</string>
+    <string name="pref_accent_color">アクセントカラー</string>
+    <string name="category_day_of_alerts">当日のアラート</string>
+    <string name="pref_day_of_alerts">当日に表示</string>
+    <string name="category_day_before_alerts">前日のアラート</string>
+    <string name="pref_day_before_alerts">前日に表示</string>
+    <string name="pref_alert_time">アラート時刻</string>
+    <string name="select_time">時刻を選択</string>
+
+    <!-- Calendar specific preferences -->
+    <string name="pref_enable_alerts">アラートを有効にする</string>
+    <string name="category_timed_events">時間指定イベント</string>
+    <string name="pref_default_reminder_time">デフォルトのリマインダー時間</string>
+    <string name="category_all_day_events_day_of">終日イベント (当日)</string>
+    <string name="category_all_day_events_day_before">終日イベント (前日)</string>
+    <string name="category_multi_day_events">複数日イベント</string>
+    <string name="pref_alerts_for_multi_day_events">複数日イベントのアラート</string>
+
+    <!-- Multi-day alert modes -->
+    <string name="multi_day_mode_off">オフ</string>
+    <string name="multi_day_mode_first_day">初日</string>
+    <string name="multi_day_mode_every_day">毎日</string>
+
+    <!-- Alert text -->
+    <string name="alert_untitled">タイトルなし</string>
+
+    <string name="alert_title_birthday">%1$sの誕生日</string>
+    <string name="alert_title_anniversary">%1$sの記念日</string>
+
+    <string name="alert_contact_today">今日 %1$s</string>
+    <string name="alert_contact_tomorrow">明日 %1$s</string>
+
+    <plurals name="alert_birthday_today_years">
+        <item quantity="other">今日（%1$s）は%2$sの%3$d歳の誕生日です！</item>
+    </plurals>
+
+    <plurals name="alert_birthday_tomorrow_years">
+        <item quantity="other">明日（%1$s）は%2$sの%3$d歳の誕生日です！</item>
+    </plurals>
+
+    <plurals name="alert_anniversary_today_years">
+        <item quantity="other">今日（%1$s）は%2$d周年の記念日です！</item>
+    </plurals>
+
+    <plurals name="alert_anniversary_tomorrow_years">
+        <item quantity="other">明日（%1$s）は%2$d周年の記念日です！</item>
+    </plurals>
+
+    <plurals name="timeline_subtitle_birthday_years">
+        <item quantity="other">%1$d歳</item>
+    </plurals>
+
+    <plurals name="timeline_subtitle_anniversary_years">
+        <item quantity="other">%1$d周年</item>
+    </plurals>
+
+    <!-- Error Messages -->
+    <string name="error_sync_failed">同期に失敗しました: %1$s</string>
+    <string name="error_timeout">タイムアウト</string>
+    <string name="error_start_app_reason">時計でのアプリ起動に失敗しました: %1$s</string>
+    <string name="error_start_app">時計でのアプリ起動に失敗しました</string>
+    <string name="error_timeout_app">時計でのアプリ起動を待機中にタイムアウトしました</string>
+    <string name="error_send_data_reason">データ送信に失敗しました: %1$s</string>
+    <string name="error_send_data">データ送信に失敗しました</string>
+    <string name="error_acquire_transaction">データ送信に失敗しました: トランズアクション現在実行中</string>
+    <string name="error_sync_timeline_pin">タイムラインピンの同期に失敗しました: %1$s</string>
+    <string name="sync_success">同期が完了しました</string>
+</resources>
