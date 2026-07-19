@@ -113,10 +113,11 @@ class MainActivity : ComponentActivity() {
         val alerts = Alert.getUpcomingAlerts(this@MainActivity, settings)
         pebbleManager.withOpenAppOnWatch {
             pebbleManager.send(settings, alerts)
+            val now = Instant.now()
             settingsRepository.updateGeneralSettings {
-                it.copy(lastSynced = Instant.now())
+                it.copy(lastSynced = now)
             }
-            settingsRepository.updateLastSentAlert(alerts.firstOrNull())
+            settingsRepository.updateLastSentAlert(alerts.firstOrNull { it.startTime > now })
         }
     }
 

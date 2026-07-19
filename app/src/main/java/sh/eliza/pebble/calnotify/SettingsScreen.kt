@@ -103,7 +103,6 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import java.util.Date
-import java.text.DateFormat
 
 fun formatDuration(
     context: Context,

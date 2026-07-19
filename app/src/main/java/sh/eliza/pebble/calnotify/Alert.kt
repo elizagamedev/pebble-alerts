@@ -512,9 +512,16 @@ private fun <T> visitUpcomingContactEventsInternal(
 
                     var nextOccurrence = parsedMonthDay.atYear(today.year)
                     if (nextOccurrence.isBefore(today)) {
-                        // If their birthday already passed this year, it's next year
-                        // Java Time gracefully handles Leap Year fallback for MonthDay.atYear
+                        // If their birthday already passed this year, it's next year. Java Time
+                        // gracefully handles Leap Year fallback for MonthDay.atYear.
                         nextOccurrence = parsedMonthDay.atYear(today.year + 1)
+                    }
+
+                    // If it's more than 6 months out, consider the one that passed recently
+                    // instead. This keeps past events (like yesterday's birthday) visible in the
+                    // timeline/watchapp.
+                    if (ChronoUnit.MONTHS.between(today, nextOccurrence) > 6) {
+                        nextOccurrence = parsedMonthDay.atYear(nextOccurrence.year - 1)
                     }
 
                     val id = makeContactId(cursor.getLong(idIdx), type)

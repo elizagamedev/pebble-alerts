@@ -102,6 +102,7 @@ static AlertUi s_alert_ui[2];
 static int s_current_alert_ui;
 static bool s_is_details_view;
 static PropertyAnimation *s_action_bar_anim;
+static AppTimer *s_vibe_timer = NULL;
 
 // Action bar elements
 static ActionBarLayer *s_action_bar;
@@ -649,6 +650,32 @@ static void prv_destroy_alert_ui(const AlertUi *ui) {
   }
 }
 
+static void prv_vibrate(void *data) {
+  if (!quiet_time_is_active()) {
+    switch (s_persist.header.settings.vibe_pattern) {
+      case VIBE_PATTERN_NONE:
+      default:
+        break;
+      case VIBE_PATTERN_SHORT:
+        vibes_short_pulse();
+        break;
+      case VIBE_PATTERN_LONG:
+        vibes_long_pulse();
+        break;
+      case VIBE_PATTERN_DOUBLE:
+        vibes_double_pulse();
+        break;
+    }
+  }
+
+  uint32_t snooze_duration = s_persist.header.settings.snooze_duration;
+  if (snooze_duration > 0) {
+    s_vibe_timer = app_timer_register(snooze_duration * 1000, prv_vibrate, NULL);
+  } else {
+    s_vibe_timer = NULL;
+  }
+}
+
 static void prv_alert_window_load(Window *window) {
   window_set_background_color(window, GColorBlack);
 
@@ -676,10 +703,17 @@ static void prv_alert_window_load(Window *window) {
 
   // Subscribe to time updates to update current time.
   tick_timer_service_subscribe(MINUTE_UNIT, prv_alert_tick_handler);
+
+  // Vibrate and start the next vibration timer.
+  prv_vibrate(NULL);
 }
 
 static void prv_alert_window_unload(Window *window) {
   tick_timer_service_unsubscribe();
+  if (s_vibe_timer) {
+    app_timer_cancel(s_vibe_timer);
+    s_vibe_timer = NULL;
+  }
   prv_destroy_alert_ui(&s_alert_ui[0]);
   prv_destroy_alert_ui(&s_alert_ui[1]);
   action_bar_layer_destroy(s_action_bar);
@@ -1015,8 +1049,24 @@ static void prv_queue_alerts(time_t alarm_time) {
     }
     if (s_persist.header.alerts[i].alarm_time != ALARM_DISMISSED &&
         s_persist.header.alerts[i].alarm_time <= alarm_time) {
-      s_alert_queue[tail++] = i;
+      bool already_queued = false;
+
+      for (uint32_t q = 0; q < tail; q++) {
+        uint32_t queued_idx = s_alert_queue[q];
+        if (s_persist.header.alerts[queued_idx].id == s_persist.header.alerts[i].id) {
+          already_queued = true;
+          break;
+        }
+      }
+
+      if (!already_queued) {
+        s_alert_queue[tail++] = i;
+      }
     }
+  }
+
+  for (uint32_t i = tail; i < MAX_ALERTS; i++) {
+    s_alert_queue[i] = ALERT_QUEUE_EMPTY;
   }
 }
 
@@ -1048,23 +1098,6 @@ static bool prv_alert_init() {
 
   if (s_alert_queue[0] == ALERT_QUEUE_EMPTY) {
     return false;
-  }
-
-  if (!quiet_time_is_active()) {
-    switch (s_persist.header.settings.vibe_pattern) {
-      case VIBE_PATTERN_NONE:
-      default:
-        break;
-      case VIBE_PATTERN_SHORT:
-        vibes_short_pulse();
-        break;
-      case VIBE_PATTERN_LONG:
-        vibes_long_pulse();
-        break;
-      case VIBE_PATTERN_DOUBLE:
-        vibes_double_pulse();
-        break;
-    }
   }
 
   return true;

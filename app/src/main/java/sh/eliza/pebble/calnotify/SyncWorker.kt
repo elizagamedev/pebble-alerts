@@ -51,9 +51,11 @@ class SyncWorker(
                 // Calculate upcoming alerts
                 val alerts = Alert.getUpcomingAlerts(applicationContext, settings)
                 val lastSentAlert = settingsRepository.lastSentAlertFlow.first()
+                val now = Instant.now()
+                val nextFutureAlert = alerts.firstOrNull { it.startTime > now }
 
-                if (alerts.firstOrNull() == lastSentAlert) {
-                    Log.d(TAG, "Next alert unchanged. Skipping sync.")
+                if (nextFutureAlert == lastSentAlert) {
+                    Log.d(TAG, "Next future alert unchanged. Skipping sync.")
                     scheduleNextUriTrigger(applicationContext)
                     return@coroutineScope Result.success()
                 }
@@ -66,7 +68,7 @@ class SyncWorker(
                         settingsRepository.updateGeneralSettings {
                             it.copy(lastSynced = Instant.now())
                         }
-                        settingsRepository.updateLastSentAlert(alerts.firstOrNull())
+                        settingsRepository.updateLastSentAlert(nextFutureAlert)
                     }
                 }
 

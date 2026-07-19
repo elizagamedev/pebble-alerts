@@ -79,10 +79,13 @@ class PebbleListenerService : BasePebbleListenerService() {
                     val settings = settingsRepository.appSettingsFlow.filterNotNull().first()
                     val alerts = Alert.getUpcomingAlerts(applicationContext, settings)
                     pebbleManager.send(settings, alerts, watch)
+                    val now = Instant.now()
                     settingsRepository.updateGeneralSettings {
-                        it.copy(lastSynced = Instant.now())
+                        it.copy(lastSynced = now)
                     }
-                    settingsRepository.updateLastSentAlert(alerts.firstOrNull())
+                    settingsRepository.updateLastSentAlert(
+                        alerts.firstOrNull { it.startTime > now },
+                    )
                 }
             } catch (e: Throwable) {
                 Log.e(TAG, "Failed to sync to watch", e)
