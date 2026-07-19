@@ -1,4 +1,4 @@
-# Pebble Calendar Alerts
+# Pebble Flexible Alerts
 
 Show alerts for your Android calendars, contact birthdays, and anniversaries.
 Allows you to add reminders to subscribed calendars or events without built-in

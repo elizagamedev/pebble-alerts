@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Pebble Calendar Alerts</string>
+    <string name="app_name">Pebble Flexible Alerts</string>
 
     <!-- General category and preferences -->
     <string name="category_general">General</string>

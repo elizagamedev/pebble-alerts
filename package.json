@@ -6,7 +6,7 @@
   "private": true,
   "dependencies": {},
   "pebble": {
-    "displayName": "Calendar Alerts",
+    "displayName": "Flexible Alerts",
     "uuid": "075a861e-c60b-4bb6-b3f2-b592925e86b1",
     "sdkVersion": "3",
     "targetPlatforms": [

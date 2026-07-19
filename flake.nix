@@ -1,5 +1,5 @@
 {
-  description = "Pebble Calendar Alerts dev environment";
+  description = "Pebble Flexible Alerts dev environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
