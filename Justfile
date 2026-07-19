@@ -1,4 +1,4 @@
-emulator := "emery"
+emulator := "diorite"
 phone := "192.168.0.69"
 store_file := env_var_or_default("KEYSTORE_FILE", env_var("HOME") + "/.AndroidKeyStore/calnotify.jks")
 store_pass := env_var_or_default("KEYSTORE_PASSWORD", "")
@@ -25,6 +25,11 @@ build-pebble-release:
 # Install the Pebble app on a device
 install-pebble: build-pebble
     pebble install --phone {{phone}}
+
+# Run the Pebble app in an emulator
+run-pebble-emulator:
+    PEBBLE_EMULATOR=1 pebble build --debug
+    pebble install --emulator {{emulator}} --logs
 
 # Generate the keystore
 make-keystore:

@@ -10,8 +10,9 @@
     "uuid": "075a861e-c60b-4bb6-b3f2-b592925e86b1",
     "sdkVersion": "3",
     "targetPlatforms": [
-      "emery",
-      "gabbro"
+      "basalt",
+      "diorite",
+      "emery"
     ],
     "watchapp": {
       "watchface": false,

@@ -3,6 +3,8 @@
 #include <string.h>
 #include <time.h>
 
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+
 #define MAX_ALERTS 6u
 
 #define MESSAGE_VERSION 0u
@@ -466,6 +468,7 @@ static void prv_click_provider(void *context) {
 #define H_MARGIN_TIME 30
 #define V_MARGIN 4
 #define HEADER_FONT FONT_KEY_GOTHIC_18
+#define STATUS_BAR_HEIGHT MAX(STATUS_BAR_LAYER_HEIGHT, 20)
 
 static void prv_content_layer_update_proc(Layer *layer, GContext *ctx) {
   AlertUi *ui = (s_alert_ui[0].content_layer == layer) ? &s_alert_ui[0] : &s_alert_ui[1];
@@ -498,7 +501,7 @@ static void prv_make_alert_ui(const AlertData *alert, AlertUi *ui) {
   prv_format_time(ui->end_time_buf, sizeof(ui->end_time_buf), alert->end_time);
 
   // Calendar name
-  GRect layer_bounds = GRect(H_MARGIN, 0, text_width - s_time_width, STATUS_BAR_LAYER_HEIGHT);
+  GRect layer_bounds = GRect(H_MARGIN, 0, text_width - s_time_width, STATUS_BAR_HEIGHT);
   ui->calendar_layer = text_layer_create(layer_bounds);
   text_layer_set_text(ui->calendar_layer, prv_get_string(alert->calendar));
   text_layer_set_font(ui->calendar_layer, fonts_get_system_font(HEADER_FONT));
@@ -593,7 +596,7 @@ static void prv_make_alert_ui(const AlertData *alert, AlertUi *ui) {
     ui->details_normal_frame =
         GRect(0, layer_bounds.origin.y, bounds.size.w, bounds.size.h - layer_bounds.origin.y);
     ui->details_expanded_frame =
-        GRect(0, STATUS_BAR_LAYER_HEIGHT, bounds.size.w, bounds.size.h - STATUS_BAR_LAYER_HEIGHT);
+        GRect(0, STATUS_BAR_HEIGHT, bounds.size.w, bounds.size.h - STATUS_BAR_HEIGHT);
 
     ui->details_text_normal_frame =
         GRect(H_MARGIN, V_MARGIN, text_width, ui->details_normal_frame.size.h - V_MARGIN);
@@ -638,16 +641,6 @@ static void prv_destroy_alert_ui(const AlertUi *ui) {
   scroll_layer_destroy(ui->details_scroll_layer);
   text_layer_destroy(ui->details_layer);
   layer_destroy(ui->content_layer);
-  for (int i = 0; i < 5; i++) {
-    if (ui->details_anims[i]) {
-      animation_unschedule(property_animation_get_animation(ui->details_anims[i]));
-      property_animation_destroy(ui->details_anims[i]);
-    }
-  }
-  if (ui->prop_anim) {
-    animation_unschedule(property_animation_get_animation(ui->prop_anim));
-    property_animation_destroy(ui->prop_anim);
-  }
 }
 
 static void prv_vibrate(void *data) {
@@ -827,6 +820,7 @@ static void prv_rearm_alarms(Persist *front, Persist *back) {
   }
 }
 
+#ifndef PEBBLE_EMULATOR
 static bool prv_persist_read_header(Persist *persist) {
   if (!persist_exists(MESSAGE_KEY_VERSION)) {
     APP_LOG(APP_LOG_LEVEL_WARNING, "persist version key missing");
@@ -885,6 +879,7 @@ static bool prv_persist_read(Persist *persist) {
 
   return true;
 }
+#endif  // not PEBBLE_EMULATOR
 
 static bool prv_persist_write_header(Persist *persist) {
   status_t status = persist_write_int(MESSAGE_KEY_VERSION, MESSAGE_VERSION);
@@ -1074,17 +1069,70 @@ static void prv_wakeup_callback(WakeupId id, int32_t cookie) {
   prv_queue_alerts((time_t)cookie);
 }
 
+#ifdef PEBBLE_EMULATOR
+static void prv_inject_dummy_data(time_t now) {
+  s_persist.header.settings.num_alerts = 2;
+  s_persist.header.settings.snooze_duration = 10;
+  s_persist.header.settings.string_heap_size = 200;
+
+  // Index 0 represents an empty string
+  s_persist.string_heap[0] = '\0';
+
+  // Dummy event 1: Work meeting
+  AlertData *alert1 = &s_persist.header.alerts[0];
+  alert1->id = 1;
+  alert1->start_time = now + 3600;
+  alert1->end_time = alert1->start_time + 3600;
+  alert1->alert_time = now;
+  alert1->alarm_time = alert1->alert_time;
+  alert1->flags = 0x17;  // standard event, Picton Blue
+
+  strcpy(&s_persist.string_heap[1], "Work Calendar");
+  alert1->calendar = 1;
+  strcpy(&s_persist.string_heap[20], "Sync Meeting");
+  alert1->title = 20;
+  strcpy(&s_persist.string_heap[50], "Discuss upcoming milestones");
+  alert1->details = 50;
+  strcpy(&s_persist.string_heap[100], "Conference Room A");
+  alert1->location = 100;
+
+  // Dummy event 2: Birthday
+  AlertData *alert2 = &s_persist.header.alerts[1];
+  alert2->id = 2;
+  alert2->start_time = now + 86400;
+  alert2->end_time = alert2->start_time + 86400;
+  alert2->alert_time = now;
+  alert2->alarm_time = alert2->alert_time;
+  alert2->flags = 0x80000000 | 0x3A;  // all-day event, Melon
+
+  strcpy(&s_persist.string_heap[130], "Birthdays");
+  alert2->calendar = 130;
+  strcpy(&s_persist.string_heap[150], "Alex's Birthday");
+  alert2->title = 150;
+  alert2->details = 0;   // no details
+  alert2->location = 0;  // no location
+
+  prv_queue_alerts(now + 86400 * 2);
+  s_backbuffer_dirty = true;
+}
+#endif  // PEBBLE_EMULATOR
+
 static bool prv_alert_init() {
   s_app_mode = APP_MODE_ALERT;
   prv_begin_listening(&s_persist_backbuffer);
+  memset(s_alert_queue, 0xFF, sizeof(s_alert_queue));  // ALERT_QUEUE_EMPTY
 
+#ifdef PEBBLE_EMULATOR
+  {
+    time_t now = time(NULL);
+    prv_inject_dummy_data(now);
+    prv_queue_alerts(now);
+  }
+#else
   if (!prv_persist_read(&s_persist)) {
     wakeup_cancel_all();
     return false;
   }
-
-  // Initialize alert queue.
-  memset(s_alert_queue, 0xFF, sizeof(s_alert_queue));  // ALERT_QUEUE_EMPTY
 
   WakeupId wakeup_id;
   int32_t cookie;
@@ -1094,15 +1142,18 @@ static bool prv_alert_init() {
   }
 
   prv_queue_alerts((time_t)cookie);
-  wakeup_service_subscribe(prv_wakeup_callback);
+#endif  // not PEBBLE_EMULATOR
 
   if (s_alert_queue[0] == ALERT_QUEUE_EMPTY) {
     return false;
   }
 
+  wakeup_service_subscribe(prv_wakeup_callback);
+
   return true;
 }
 
+#ifndef PEBBLE_EMULATOR
 static bool prv_refresh_init() {
   s_app_mode = APP_MODE_REFRESH;
   APP_LOG(APP_LOG_LEVEL_INFO, "prv_refresh_init: starting");
@@ -1122,6 +1173,7 @@ static bool prv_refresh_init() {
   APP_LOG(APP_LOG_LEVEL_INFO, "prv_refresh_init: success");
   return true;
 }
+#endif  // not PEBBLE_EMULATOR
 
 int main() {
   s_backbuffer_dirty = false;
@@ -1136,6 +1188,11 @@ int main() {
     s_language = LANG_ENGLISH;
   }
 
+#ifdef PEBBLE_EMULATOR
+  if (!prv_alert_init()) {
+    return 0;
+  }
+#else
   switch (launch_reason()) {
     case APP_LAUNCH_PHONE:
       if (!prv_refresh_init()) {
@@ -1151,6 +1208,7 @@ int main() {
       APP_LOG(APP_LOG_LEVEL_ERROR, "unsupported launch reason: %d", launch_reason());
       return 0;
   }
+#endif  // not PEBBLE_EMULATOR
 
   prv_init_ui();
   switch (s_app_mode) {

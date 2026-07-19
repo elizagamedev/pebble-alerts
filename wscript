@@ -21,6 +21,8 @@ def build(ctx):
     cached_env = ctx.env
     for platform in ctx.env.TARGET_PLATFORMS:
         ctx.env = ctx.all_envs[platform]
+        if os.environ.get('PEBBLE_EMULATOR') == '1':
+            ctx.env.append_value('CFLAGS', '-DPEBBLE_EMULATOR=1')
         ctx.set_group(ctx.env.PLATFORM_NAME)
         app_elf = "{}/pebble-app.elf".format(ctx.env.BUILD_DIR)
         ctx.pbl_build(
