@@ -138,7 +138,7 @@ static const char *const s_strings[NUM_LANGS][NUM_STRINGS] = {
 // ---------------------------------------------------------------------------
 
 // Format an epoch as a local clock string into buf.
-static void prv_format_time(char *buf, size_t len, uint32_t epoch) {
+static void prv_format_time_am_pm(char *buf, size_t len, uint32_t epoch) {
   time_t t = (time_t)epoch;
   struct tm *tm_info = localtime(&t);
   if (clock_is_24h_style()) {
@@ -148,12 +148,22 @@ static void prv_format_time(char *buf, size_t len, uint32_t epoch) {
   }
 }
 
+static void prv_format_time(char *buf, size_t len, uint32_t epoch) {
+  time_t t = (time_t)epoch;
+  struct tm *tm_info = localtime(&t);
+  if (clock_is_24h_style()) {
+    strftime(buf, len, "%H:%M", tm_info);
+  } else {
+    strftime(buf, len, "%l:%M", tm_info);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Display update
 // ---------------------------------------------------------------------------
 
 static void prv_update_time() {
-  prv_format_time(s_time_buf, sizeof(s_time_buf), time(NULL));
+  prv_format_time_am_pm(s_time_buf, sizeof(s_time_buf), time(NULL));
   layer_mark_dirty(text_layer_get_layer(s_alert_ui[s_current_alert_ui].time_layer));
 }
 
@@ -465,7 +475,11 @@ static void prv_click_provider(void *context) {
 // ---------------------------------------------------------------------------
 
 #define H_MARGIN 10
+#if PBL_DISPLAY_WIDTH >= 200
 #define H_MARGIN_TIME 30
+#else
+#define H_MARGIN_TIME 20
+#endif
 #define V_MARGIN 4
 #define HEADER_FONT FONT_KEY_GOTHIC_18
 #define STATUS_BAR_HEIGHT MAX(STATUS_BAR_LAYER_HEIGHT, 20)
